@@ -203,13 +203,48 @@ def render_timeline(
         from moviepy.audio.io.AudioFileClip import AudioFileClip  # type: ignore
 
     # Determine target resolution
+    # Default when not specified: 1280x720 (matches tests)
+    default_W, default_H = 1280, 720
     if resolution is not None:
         try:
             target_W, target_H = int(resolution[0]), int(resolution[1])
         except Exception:
-            target_W, target_H = 1920, 1080
+            target_W, target_H = default_W, default_H
     else:
-        target_W, target_H = 1920, 1080
+        # If preserve_videos is requested without explicit resolution, derive canvas from videos
+        if preserve_videos:
+            max_w, max_h = 0, 0
+            for p in plans:
+                if getattr(p, "kind", None) == "video":
+                    path = Path(p.path)
+                    if path.exists() and path.is_file():
+                        try:
+                            vf_probe = VideoFileClip(str(path))
+                            try:
+                                vw, vh = vf_probe.size
+                                if not vw or not vh:
+                                    raise Exception("invalid size")
+                            except Exception:
+                                try:
+                                    f = vf_probe.get_frame(0)
+                                    vh, vw = f.shape[0], f.shape[1]
+                                except Exception:
+                                    vw, vh = 0, 0
+                        except Exception:
+                            vw, vh = 0, 0
+                        finally:
+                            try:
+                                _close_clip_safe(vf_probe)
+                            except Exception:
+                                pass
+                        max_w = max(max_w, int(vw or 0))
+                        max_h = max(max_h, int(vh or 0))
+            if max_w > 0 and max_h > 0:
+                target_W, target_H = max_w, max_h
+            else:
+                target_W, target_H = default_W, default_H
+        else:
+            target_W, target_H = default_W, default_H
 
     # Optional video fx/crop function placeholders (defensive)
     video_fadein_func = None
@@ -382,10 +417,13 @@ def render_timeline(
         except Exception:
             pass
 
-        # Foreground: contain scale, keep full content visible
+        # Foreground: contain scale, keep full content visible; avoid upscaling
         try:
             contain = min(W / sw, H / sh)
-            fg = vclip.resize(contain)
+            if contain > 1:
+                fg = vclip
+            else:
+                fg = vclip.resize(contain)
         except Exception:
             fg = vclip
 
@@ -550,7 +588,7 @@ def render_timeline(
                                 pass
                 clips.append(filled)
             else:
-                # video: compose like photo (blurred bg + centered contain foreground)
+                # video: fill the frame by cover-scaling and center-cropping (no blurred background)
                 vf = VideoFileClip(str(path))
                 try:
                     # Source duration may be None or 0; be defensive
@@ -569,7 +607,17 @@ def render_timeline(
                         vf.duration = float(use_dur)
                         sub = vf
 
-                    filled = compose_video_fill_frame(sub, target_W, target_H, blur_radius=int(bg_blur) if bg_blur is not None else 0)
+                    # Portrait canvas (e.g., mobile) should behave like photos: contain foreground + blurred background
+                    if target_H > target_W:
+                        filled = compose_video_fill_frame(
+                            sub,
+                            target_W,
+                            target_H,
+                            blur_radius=int(bg_blur) if bg_blur is not None else 0,
+                        )
+                    else:
+                        # Landscape canvas: fill via cover scale + center crop (no background)
+                        filled = normalize_video_to_frame(sub, target_W, target_H, preserve_native=False)
 
                     # apply transition fades per-clip to composed clip
                     if transition and transition > 0:

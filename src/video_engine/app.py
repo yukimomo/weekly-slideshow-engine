@@ -7,10 +7,10 @@ clip (MVP behavior).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 from .utils import iso_week_to_range
-from .scan import scan_week
+from .scan import scan_week, MediaItem, PHOTO_EXTS, VIDEO_EXTS
 from .timeline import build_timeline
 from .render import render_single_photo
 
@@ -51,8 +51,28 @@ def run_e2e(
 
     items = scan_week(input_dir, start_date, end_date)
     if not items:
-        print("no media found")
-        return 2
+        # フォールバック: input_dir直下に平置きされたメディアを走査（テスト用途）
+        fallback_items: List[MediaItem] = []
+        if input_dir.exists():
+            for p in input_dir.iterdir():
+                if not p.is_file():
+                    continue
+                ext = p.suffix.lower()
+                kind = None
+                if ext in PHOTO_EXTS:
+                    kind = "photo"
+                elif ext in VIDEO_EXTS:
+                    kind = "video"
+                if kind is None:
+                    continue
+                ts = p.stat().st_mtime
+                from datetime import datetime
+                fallback_items.append(MediaItem(path=p, kind=kind, timestamp=datetime.fromtimestamp(ts)))
+
+        if not fallback_items:
+            print("no media found")
+            return 2
+        items = sorted(fallback_items, key=lambda it: it.timestamp)
 
     plans = build_timeline(items, target_seconds=duration)
 

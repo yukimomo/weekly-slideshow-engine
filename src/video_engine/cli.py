@@ -9,6 +9,7 @@ with a `build_parser()` factory and `main()` entry point.
 
 import argparse
 from pathlib import Path
+import sys
 from typing import List, Optional
 
 
@@ -34,6 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=parse_resolution,
         default=None,
         help="Output resolution as WIDTHxHEIGHT (e.g. 1920x1080). Default: 1280x720 or auto."
+    )
+
+    parser.add_argument(
+        "--preset",
+        type=str,
+        choices=["youtube", "mobile", "preview"],
+        help="Apply a preset of defaults (youtube, mobile, preview). Explicit flags override preset values."
     )
 
     parser.add_argument(
@@ -109,6 +117,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    # Apply preset defaults, then let explicit CLI flags override.
+    from .presets import merge_preset, detect_provided_options
+    argv_tokens = argv if argv is not None else sys.argv[1:]
+    provided = detect_provided_options(argv_tokens)
+    base = {
+        "resolution": args.resolution,
+        "duration": float(args.duration),
+        "transition": float(args.transition),
+        "bg_blur": float(args.bg_blur),
+    }
+    effective = merge_preset(getattr(args, "preset", None), base, provided)
+    # Reflect effective values back to args
+    args.resolution = effective.get("resolution", args.resolution)
+    args.duration = float(effective.get("duration", args.duration))
+    args.transition = float(effective.get("transition", args.transition))
+    args.bg_blur = float(effective.get("bg_blur", args.bg_blur))
+
     # Require week for now
     if not args.week:
         parser.error("argument --week is required")
@@ -139,9 +164,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Input dir: {args.input} - found {len(items)} media items")
         print(f"Timeline entries: {len(plans)}")
         print(f"Chosen BGM: {bgm_choice}")
-        print(f"Transition: {float(args.transition)}s")
-        print(f"Preserve videos: {bool(args.preserve_videos)}")
-        print(f"Background blur: {float(args.bg_blur)}")
+        # Preset summary + effective values
+        print(f"Preset: {getattr(args, 'preset', None) or 'none'}")
+        eff_res = args.resolution
+        res_txt = f"{eff_res[0]}x{eff_res[1]}" if eff_res else "default"
+        print(f"Effective resolution: {res_txt}")
+        print(f"Effective duration: {float(args.duration)}s")
+        print(f"Effective transition: {float(args.transition)}s")
+        print(f"Effective bg_blur: {float(args.bg_blur)}")
         return 0
 
     # Non-dry run: run end-to-end
