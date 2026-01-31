@@ -1,10 +1,11 @@
+
+from __future__ import annotations
+import re
 """Command-line interface for the video_engine package.
 
 This module provides a minimal, extensible argparse-based CLI skeleton
 with a `build_parser()` factory and `main()` entry point.
 """
-
-from __future__ import annotations
 
 import argparse
 from pathlib import Path
@@ -12,14 +13,27 @@ from typing import List, Optional
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build and return the top-level argument parser.
+    def parse_resolution(s):
+        if s is None:
+            return None
+        m = re.match(r"^(\d{2,5})x(\d{2,5})$", s)
+        if not m:
+            raise argparse.ArgumentTypeError("--resolution must be in WIDTHxHEIGHT format, e.g. 1920x1080")
+        w, h = int(m.group(1)), int(m.group(2))
+        if w < 320 or h < 240 or w > 8192 or h > 4320:
+            raise argparse.ArgumentTypeError("--resolution values out of supported range (min 320x240, max 8192x4320)")
+        return (w, h)
 
-    The parser is intentionally simple and designed to be extended with
-    subcommands in the future.
-    """
     parser = argparse.ArgumentParser(
         prog="video_engine",
         description="Weekly slideshow engine (skeleton CLI).",
+    )
+
+    parser.add_argument(
+        "--resolution",
+        type=parse_resolution,
+        default=None,
+        help="Output resolution as WIDTHxHEIGHT (e.g. 1920x1080). Default: 1280x720 or auto."
     )
 
     parser.add_argument(
@@ -141,5 +155,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         transition=float(args.transition),
         preserve_videos=bool(args.preserve_videos),
         bg_blur=float(args.bg_blur),
+        resolution=args.resolution,
     )
     return rc

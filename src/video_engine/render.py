@@ -176,6 +176,7 @@ def render_timeline(
     transition: float = 0.3,
     bg_blur: float = 6.0,
     preserve_videos: bool = False,
+    resolution: tuple[int, int] | None = None,
 ) -> None:
     """Render a sequence of ClipPlans into a single MP4 file by concatenation.
 
@@ -191,46 +192,37 @@ def render_timeline(
     if not plans:
         raise ValueError("plans must be non-empty")
 
+    # Prefer the convenient editor import
     try:
-        # Prefer the convenient editor import
-        try:
-            from moviepy.editor import ImageClip, VideoFileClip, concatenate_videoclips, AudioFileClip, CompositeVideoClip
-        except Exception:
-            # Fallback imports for different MoviePy structures
-            from moviepy.video.VideoClip import ImageClip  # type: ignore
-            from moviepy.video.io.VideoFileClip import VideoFileClip  # type: ignore
-            from moviepy.video.compositing.concatenate import concatenate_videoclips  # type: ignore
-            from moviepy.audio.io.AudioFileClip import AudioFileClip  # type: ignore
-            try:
-                from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip  # type: ignore
-            except Exception:
-                from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip  # type: ignore
-    except Exception as exc:  # pragma: no cover - depends on environment
-        raise RuntimeError(
-            "moviepy is required for rendering; install the 'render' extras (e.g., pip install -e \".[render]\")"
-        ) from exc
-
-    # Reuse audio fx helpers (classes or functions)
-    AudioLoopClass = None
-
-    # Pillow compatibility: some Pillow versions removed Image.ANTIALIAS in favor of
-    # Image.Resampling.*; attempt to provide a fallback name so MoviePy's resize
-    # (which references Image.ANTIALIAS) continues to work across versions.
-    try:
-        import PIL.Image as PILImage
-
-        if not hasattr(PILImage, "ANTIALIAS") and hasattr(PILImage, "Resampling"):
-            PILImage.ANTIALIAS = PILImage.Resampling.LANCZOS
+        from moviepy.editor import ImageClip, VideoFileClip, concatenate_videoclips, AudioFileClip, CompositeVideoClip
     except Exception:
-        pass
-    AudioFadeInClass = None
-    AudioFadeOutClass = None
+        # Fallback imports for different MoviePy structures
+        from moviepy.video.VideoClip import ImageClip  # type: ignore
+        from moviepy.video.io.VideoFileClip import VideoFileClip  # type: ignore
+        from moviepy.video.compositing.concatenate import concatenate_videoclips  # type: ignore
+        from moviepy.audio.io.AudioFileClip import AudioFileClip  # type: ignore
+
+    # Determine target resolution
+    if resolution is not None:
+        try:
+            target_W, target_H = int(resolution[0]), int(resolution[1])
+        except Exception:
+            target_W, target_H = 1920, 1080
+    else:
+        target_W, target_H = 1920, 1080
+
+    # Optional video fx/crop function placeholders (defensive)
+    video_fadein_func = None
+    video_fadeout_func = None
+    video_crop_func = None
+
+    # Audio fx initializations (similar to render_single_photo)
     audio_loop = None
     audio_fadein = None
     audio_fadeout = None
-    # Video fade helpers
-    video_fadein_func = None
-    video_fadeout_func = None
+    AudioLoopClass = None
+    AudioFadeInClass = None
+    AudioFadeOutClass = None
     try:
         import moviepy.audio.fx.all as afx
         audio_loop = getattr(afx, "audio_loop", None)
@@ -250,176 +242,66 @@ def render_timeline(
         except Exception:
             AudioFadeOutClass = None
 
-    # Video fade and utility fallbacks
-    try:
-        import moviepy.video.fx.all as vfx
-        video_fadein_func = getattr(vfx, "fadein", None)
-        video_fadeout_func = getattr(vfx, "fadeout", None)
-        video_crop_func = getattr(vfx, "crop", None)
-        video_blur_func = getattr(vfx, "gaussian_blur", None) or getattr(vfx, "blur", None)
-    except Exception:
+    # Minimal photo composition helper: blurred background + centered foreground
+    def compose_photo_fill_frame(imgclip, W: int, H: int, blur_radius: int = 0):
         try:
-            from moviepy.video.fx.fadein import fadein as video_fadein_func  # type: ignore
-        except Exception:
-            video_fadein_func = None
-        try:
-            from moviepy.video.fx.fadeout import fadeout as video_fadeout_func  # type: ignore
-        except Exception:
-            video_fadeout_func = None
-        try:
-            from moviepy.video.fx.crop import crop as video_crop_func  # type: ignore
-        except Exception:
-            video_crop_func = None
-        try:
-            from moviepy.video.fx.gaussian_blur import gaussian_blur as video_blur_func  # type: ignore
-        except Exception:
-            video_blur_func = None
-
-    # Output size constants (width x height)
-    OUT_W = 1280
-    OUT_H = 720
-
-    # Decide target frame size. If `preserve_videos` is True and there are
-    # video clips present, use the maximum native video width/height as the
-    # target canvas to avoid rescaling video frames. Otherwise fall back to
-    # the default OUT_W/OUT_H.
-    target_W = OUT_W
-    target_H = OUT_H
-    if preserve_videos:
-        max_w = 0
-        max_h = 0
-        any_video = False
-        for p in plans:
-            if getattr(p, "kind", None) == "video":
-                any_video = True
-                try:
-                    vf = VideoFileClip(str(p.path))
-                    try:
-                        sw, sh = getattr(vf, "size", (None, None))
-                        if not sw or not sh:
-                            frame = vf.get_frame(0)
-                            sh, sw = frame.shape[0], frame.shape[1]
-                    except Exception:
-                        sw, sh = (0, 0)
-                except Exception:
-                    sw, sh = (0, 0)
-                finally:
-                    try:
-                        _close_clip_safe(vf)
-                    except Exception:
-                        pass
-
-                if sw and sh:
-                    max_w = max(max_w, int(sw))
-                    max_h = max(max_h, int(sh))
-
-        if any_video and max_w > 0 and max_h > 0:
-            target_W, target_H = max_w, max_h
-
-    def ensure_frame_size(clip, W: int, H: int):
-        """Ensure a clip is exactly W x H by cover-scaling and center-cropping (best-effort).
-        Preserves duration."""
-        try:
-            sw, sh = clip.size
-        except Exception:
-            sw, sh = (W, H)
-
-        # Cover scale
-        try:
-            scale = max(W / sw, H / sh)
-            r = clip.resize(scale)
+            sw, sh = imgclip.size
+            if not sw or not sh:
+                raise Exception("invalid size")
         except Exception:
             try:
-                r = clip.resize((W, H))
+                frame = imgclip.get_frame(0)
+                sh, sw = frame.shape[0], frame.shape[1]
             except Exception:
-                r = clip
+                sw, sh = (W, H)
 
-        # Center-crop if possible
+        # Build blurred background via PIL if possible
+        bg = None
         try:
-            if hasattr(r, "crop"):
-                try:
-                    r = r.crop(width=W, height=H, x_center=r.w / 2, y_center=r.h / 2)
-                except Exception:
-                    r = r.crop(width=W, height=H)
-            elif video_crop_func is not None:
-                try:
-                    r = video_crop_func(r, width=W, height=H, x_center=r.w / 2, y_center=r.h / 2)
-                except Exception:
-                    x1 = max(0, (r.w - W) / 2)
-                    y1 = max(0, (r.h - H) / 2)
-                    x2 = x1 + W
-                    y2 = y1 + H
-                    r = video_crop_func(r, x1=int(x1), y1=int(y1), x2=int(x2), y2=int(y2))
-            else:
-                r = r.resize((W, H))
-        except Exception:
+            from PIL import Image, ImageFilter
+            import numpy as np
+            pil_img = None
             try:
-                r = r.resize((W, H))
+                if hasattr(imgclip, 'filename') and getattr(imgclip, 'filename', None):
+                    pil_img = Image.open(imgclip.filename).convert("RGB")
+                else:
+                    arr = imgclip.get_frame(0)
+                    pil_img = Image.fromarray(arr)
             except Exception:
-                pass
+                pil_img = None
+            if pil_img is not None:
+                scale = max(W / pil_img.width, H / pil_img.height)
+                newsize = (int(pil_img.width * scale), int(pil_img.height * scale))
+                pil_img = pil_img.resize(newsize, Image.LANCZOS)
+                if blur_radius and blur_radius > 0:
+                    pil_img = pil_img.filter(ImageFilter.GaussianBlur(radius=int(blur_radius)))
+                left = max(0, (pil_img.width - W) // 2)
+                top = max(0, (pil_img.height - H) // 2)
+                pil_img = pil_img.crop((left, top, left + W, top + H))
+                bg = ImageClip(np.array(pil_img))
+        except Exception:
+            bg = None
 
         try:
-            r = r.set_duration(clip.duration)
+            if bg is None:
+                # Fallback: scale original to cover
+                cover_scale = max(W / sw, H / sh)
+                bg = imgclip.resize(cover_scale)
+        except Exception:
+            bg = imgclip
+
+        try:
+            bg = bg.set_duration(imgclip.duration)
         except Exception:
             pass
 
-        return r
-
-    def compose_photo_fill_frame(imgclip, W: int, H: int, blur_radius: int = 6):
-        """For PHOTOS: background cover-scaled (optional blur), foreground contain-scaled centered.
-
-        For portrait images (height > width) we avoid upscaling the foreground: the
-        background is cover-scaled and blurred, while the foreground is placed at
-        its original size (or scaled down if larger than the canvas). The blur
-        radius is increased slightly for portrait photos to emphasize the depth effect.
-        """
+        # Foreground: contain scale (avoid upscale for portrait)
         try:
-            sw, sh = imgclip.size
-        except Exception:
-            sw, sh = (W, H)
-
-        # Background: cover-scale to fill canvas
-        bg = ensure_frame_size(imgclip, W, H)
-
-        # Pillowで確実に強いぼかしをかけてからImageClip化
-        from PIL import Image, ImageFilter
-        import numpy as np
-        # imgclipがImageClip型ならfilename属性またはimgclip.get_frame(0)から画像取得
-        pil_img = None
-        try:
-            if hasattr(imgclip, 'filename') and imgclip.filename:
-                pil_img = Image.open(imgclip.filename).convert("RGB")
-            else:
-                arr = imgclip.get_frame(0)
-                pil_img = Image.fromarray(arr)
-        except Exception:
-            pil_img = None
-        if pil_img is not None:
-            # coverスケール
-            scale = max(W / pil_img.width, H / pil_img.height)
-            newsize = (int(pil_img.width * scale), int(pil_img.height * scale))
-            pil_img = pil_img.resize(newsize, Image.LANCZOS)
-            # 強いぼかし（portraitは4倍, landscapeは2倍）
-            br = int(blur_radius * (4 if sh > sw else 2))
-            if br > 0:
-                pil_img = pil_img.filter(ImageFilter.GaussianBlur(radius=br))
-            # 中央クロップ
-            left = (pil_img.width - W) // 2
-            top = (pil_img.height - H) // 2
-            pil_img = pil_img.crop((left, top, left + W, top + H))
-            # ImageClip化
-            bg = ImageClip(np.array(pil_img)).set_duration(imgclip.duration)
-        # ...existing code...
-
-        # Foreground: contain scale but do not upscale for portrait images
-        try:
-            contain_scale = min(W / sw, H / sh)
-            if sh > sw and contain_scale > 1:
-                # Portrait and would be upscaled: keep original size (no upscale)
+            contain = min(W / sw, H / sh)
+            if sh > sw and contain > 1:
                 fg = imgclip
             else:
-                # Scale down or keep same size
-                fg = imgclip.resize(contain_scale)
+                fg = imgclip.resize(contain)
         except Exception:
             fg = imgclip
 
@@ -436,21 +318,8 @@ def render_timeline(
         except Exception:
             pass
 
-        # ...existing code...
-
+        try:
             comp = CompositeVideoClip([bg.set_position((0, 0)), fg], size=(W, H))
-            # Debug: save composed frame if requested
-            try:
-                from pathlib import Path
-
-                dbg = Path("tmp_debug")
-                if dbg.exists():
-                    try:
-                        comp.save_frame(str(dbg / "dbg_comp.png"), t=0)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
         except Exception:
             try:
                 comp = CompositeVideoClip([bg, fg.set_position(("center", "center"))], size=(W, H))
@@ -459,6 +328,90 @@ def render_timeline(
 
         try:
             comp = comp.set_duration(imgclip.duration)
+        except Exception:
+            pass
+
+        return comp
+
+    # Minimal video composition helper: blurred background + centered foreground (contain)
+    def compose_video_fill_frame(vclip, W: int, H: int, blur_radius: int = 0):
+        try:
+            sw, sh = vclip.size
+            if not sw or not sh:
+                raise Exception("invalid size")
+        except Exception:
+            try:
+                frame = vclip.get_frame(0)
+                sh, sw = frame.shape[0], frame.shape[1]
+            except Exception:
+                sw, sh = (W, H)
+
+        # Build blurred background via first frame
+        bg = None
+        try:
+            from PIL import Image, ImageFilter
+            import numpy as np
+            arr = None
+            try:
+                arr = vclip.get_frame(0)
+            except Exception:
+                arr = None
+            if arr is not None:
+                pil_img = Image.fromarray(arr)
+                scale = max(W / pil_img.width, H / pil_img.height)
+                newsize = (int(pil_img.width * scale), int(pil_img.height * scale))
+                pil_img = pil_img.resize(newsize, Image.LANCZOS)
+                if blur_radius and blur_radius > 0:
+                    pil_img = pil_img.filter(ImageFilter.GaussianBlur(radius=int(blur_radius)))
+                left = max(0, (pil_img.width - W) // 2)
+                top = max(0, (pil_img.height - H) // 2)
+                pil_img = pil_img.crop((left, top, left + W, top + H))
+                bg = ImageClip(np.array(pil_img))
+        except Exception:
+            bg = None
+
+        try:
+            if bg is None:
+                cover_scale = max(W / sw, H / sh)
+                bg = vclip.resize(cover_scale)
+        except Exception:
+            bg = vclip
+
+        try:
+            bg = bg.set_duration(vclip.duration)
+        except Exception:
+            pass
+
+        # Foreground: contain scale, keep full content visible
+        try:
+            contain = min(W / sw, H / sh)
+            fg = vclip.resize(contain)
+        except Exception:
+            fg = vclip
+
+        try:
+            fg = fg.set_position(("center", "center"))
+        except Exception:
+            try:
+                fg = fg.set_position("center")
+            except Exception:
+                pass
+
+        try:
+            fg = fg.set_duration(vclip.duration)
+        except Exception:
+            pass
+
+        try:
+            comp = CompositeVideoClip([bg.set_position((0, 0)), fg], size=(W, H))
+        except Exception:
+            try:
+                comp = CompositeVideoClip([bg, fg.set_position(("center", "center"))], size=(W, H))
+            except Exception:
+                comp = CompositeVideoClip([bg, fg])
+
+        try:
+            comp = comp.set_duration(vclip.duration)
         except Exception:
             pass
 
@@ -597,12 +550,11 @@ def render_timeline(
                                 pass
                 clips.append(filled)
             else:
-                # video
+                # video: compose like photo (blurred bg + centered contain foreground)
                 vf = VideoFileClip(str(path))
                 try:
                     # Source duration may be None or 0; be defensive
                     src_dur = getattr(vf, "duration", None)
-                    # If preserve_videos is True and the source has a duration, prefer it.
                     if preserve_videos and src_dur and float(src_dur) > 0:
                         use_dur = float(src_dur)
                     else:
@@ -610,47 +562,45 @@ def render_timeline(
                         if src_dur and float(src_dur) > 0:
                             use_dur = min(float(src_dur), use_dur)
 
-                    # Trim to available duration. If source is shorter than target, we keep the short clip
+                    # Trim or set duration
                     try:
                         sub = vf.subclip(0, float(use_dur))
                     except Exception:
-                        # fallback to setting duration attribute and use vf
                         vf.duration = float(use_dur)
                         sub = vf
 
-                    # Normalize video to frame (no background/foreground overlay)
-                    sub = normalize_video_to_frame(sub, target_W, target_H, preserve_native=preserve_videos)
+                    filled = compose_video_fill_frame(sub, target_W, target_H, blur_radius=int(bg_blur) if bg_blur is not None else 0)
 
-                    # apply transition fades per-clip to normalized video
+                    # apply transition fades per-clip to composed clip
                     if transition and transition > 0:
-                        t = min(float(transition), float(sub.duration) / 2.0)
+                        t = min(float(transition), float(filled.duration) / 2.0)
                         if t > 0:
                             applied = False
                             if video_fadein_func is not None:
                                 try:
-                                    sub = video_fadein_func(sub, t)
+                                    filled = video_fadein_func(filled, t)
                                     applied = True
                                 except Exception:
                                     applied = False
-                            if not applied and hasattr(sub, "fadein"):
+                            if not applied and hasattr(filled, "fadein"):
                                 try:
-                                    sub = sub.fadein(t)
+                                    filled = filled.fadein(t)
                                 except Exception:
                                     pass
                             applied = False
                             if video_fadeout_func is not None:
                                 try:
-                                    sub = video_fadeout_func(sub, t)
+                                    filled = video_fadeout_func(filled, t)
                                     applied = True
                                 except Exception:
                                     applied = False
-                            if not applied and hasattr(sub, "fadeout"):
+                            if not applied and hasattr(filled, "fadeout"):
                                 try:
-                                    sub = sub.fadeout(t)
+                                    filled = filled.fadeout(t)
                                 except Exception:
                                     pass
 
-                    clips.append(sub)
+                    clips.append(filled)
                 except Exception:
                     # ensure we close vf on error to avoid leaks
                     _close_clip_safe(vf)

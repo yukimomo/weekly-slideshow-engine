@@ -41,6 +41,7 @@ def run_e2e(
     transition: float = 0.3,
     preserve_videos: bool = False,
     bg_blur: float = 6.0,
+    resolution: tuple[int, int] | None = None,
 ) -> int:
     """Run a minimal end-to-end preview creation for the given ISO week.
 
@@ -75,6 +76,7 @@ def run_e2e(
         transition=transition,
         preserve_videos=preserve_videos,
         bg_blur=bg_blur,
+        resolution=resolution,
     )
 
     print(f"Wrote preview: {out_path}")
