@@ -11,34 +11,139 @@ from pathlib import Path
 from typing import Optional
 
 
-def render_single_photo(photo_path: Path, output_path: Path, duration: float = 60.0, fps: int = 30) -> None:
-    """Render a single photo as an MP4 video.
+def render_single_photo(
+    photo_path: Path,
+    output_path: Path,
+    duration: float = 60.0,
+    fps: int = 30,
+    bgm_path: Optional[Path] = None,
+    fade_in: float = 1.0,
+    fade_out: float = 1.0,
+) -> None:
+    """Render a single photo as an MP4 video, optionally with background music.
 
     Parameters
     - photo_path: Path to the source image file (must exist)
     - output_path: Path to write the MP4 file (parent directories will be created)
     - duration: duration of the output video in seconds (float)
     - fps: frames per second to write
+    - bgm_path: optional Path to an audio file to use as background music
+    - fade_in/fade_out: seconds for audio fade-in/out (will be clamped to <= duration/2)
 
     Raises
-    - FileNotFoundError: if ``photo_path`` does not exist or is not a file
+    - FileNotFoundError: if ``photo_path`` or ``bgm_path`` (when provided) does not exist
     - RuntimeError: if moviepy is not installed or rendering fails
     """
     if not photo_path.exists() or not photo_path.is_file():
         raise FileNotFoundError(f"Photo not found or not a file: {photo_path}")
 
+    if bgm_path is not None and (not bgm_path.exists() or not bgm_path.is_file()):
+        raise FileNotFoundError(f"BGM not found or not a file: {bgm_path}")
+
     try:
         # Import lazily to provide clear errors when dependency is missing
-        from moviepy.editor import ImageClip
+        # Support different MoviePy layouts across versions.
+        try:
+            from moviepy.editor import ImageClip, AudioFileClip
+        except Exception:
+            # Fallback paths for newer/older MoviePy versions
+            from moviepy.video.VideoClip import ImageClip  # type: ignore
+            from moviepy.audio.io.AudioFileClip import AudioFileClip  # type: ignore
+
+        # Audio fx: try to import a convenient container; otherwise import specific functions
+        # Audio fx: try to import a convenient container; otherwise import classes
+        audio_loop = None
+        audio_fadein = None
+        audio_fadeout = None
+        AudioLoopClass = None
+        AudioFadeInClass = None
+        AudioFadeOutClass = None
+        try:
+            import moviepy.audio.fx.all as afx
+            audio_loop = getattr(afx, "audio_loop", None)
+            audio_fadein = getattr(afx, "audio_fadein", None)
+            audio_fadeout = getattr(afx, "audio_fadeout", None)
+        except Exception:
+            # Import fx classes for MoviePy versions that expose them as classes
+            try:
+                from moviepy.audio.fx.AudioLoop import AudioLoop as AudioLoopClass
+            except Exception:
+                AudioLoopClass = None
+            try:
+                from moviepy.audio.fx.AudioFadeIn import AudioFadeIn as AudioFadeInClass
+            except Exception:
+                AudioFadeInClass = None
+            try:
+                from moviepy.audio.fx.AudioFadeOut import AudioFadeOut as AudioFadeOutClass
+            except Exception:
+                AudioFadeOutClass = None
     except Exception as exc:  # pragma: no cover - depends on environment
-        raise RuntimeError("moviepy is required for rendering; install the 'render' extras (e.g., pip install -e \".[render]\"") from exc
+        raise RuntimeError(
+            "moviepy is required for rendering with audio; install the 'render' extras (e.g., pip install -e \".[render]\")"
+        ) from exc
 
     # Ensure output directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        clip = ImageClip(str(photo_path)).set_duration(float(duration))
-        # Minimal write parameters: libx264, no audio
-        clip.write_videofile(str(output_path), fps=int(fps), codec="libx264", audio=False, verbose=False, logger=None)
+        # Create clip and set duration using APIs compatible across MoviePy versions
+        clip = ImageClip(str(photo_path))
+        try:
+            clip = clip.with_duration(float(duration))
+        except Exception:
+            # Fallback to attribute assignment
+            clip.duration = float(duration)
+
+        audio_clip = None
+        if bgm_path is not None:
+            audio = AudioFileClip(str(bgm_path))
+            # Ensure audio is at least `duration` long by looping if necessary
+            if audio.duration < duration:
+                if audio_loop is not None:
+                    audio = audio_loop(audio, duration=duration)
+                elif AudioLoopClass is not None:
+                    audio = audio.with_effects([AudioLoopClass(duration=duration)])
+                else:
+                    # naive concatenation fallback
+                    n = int(duration / audio.duration) + 1
+                    new_audio = audio
+                    for _ in range(n - 1):
+                        new_audio = new_audio + audio
+                    audio = new_audio.subclip(0, float(duration))
+            else:
+                audio = audio.subclip(0, float(duration))
+
+            # Clamp fades
+            max_fade = float(duration) / 2.0
+            fi = min(float(fade_in), max_fade)
+            fo = min(float(fade_out), max_fade)
+
+            if fi > 0:
+                if audio_fadein is not None:
+                    audio = audio_fadein(audio, fi)
+                elif AudioFadeInClass is not None:
+                    audio = audio.with_effects([AudioFadeInClass(fi)])
+            if fo > 0:
+                if audio_fadeout is not None:
+                    audio = audio_fadeout(audio, fo)
+                elif AudioFadeOutClass is not None:
+                    audio = audio.with_effects([AudioFadeOutClass(fo)])
+
+            audio_clip = audio
+            # Set audio on clip, handling different MoviePy versions
+            try:
+                clip = clip.set_audio(audio_clip)
+            except Exception:
+                clip.audio = audio_clip
+
+        # Write file: include audio codec only if audio is present
+        write_kwargs = dict(fps=int(fps), codec="libx264")
+        if audio_clip is not None:
+            write_kwargs.update(dict(audio=True, audio_codec="aac"))
+        else:
+            write_kwargs.update(dict(audio=False))
+
+        # Some MoviePy versions have different write_videofile signatures; call with minimal kwargs.
+        clip.write_videofile(str(output_path), **write_kwargs)
     except Exception as exc:  # pragma: no cover - depends on runtime ffmpeg
         raise RuntimeError(f"Failed to render video: {exc}") from exc
