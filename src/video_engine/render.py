@@ -607,8 +607,22 @@ def render_timeline(
                         vf.duration = float(use_dur)
                         sub = vf
 
-                    # Portrait canvas (e.g., mobile) should behave like photos: contain foreground + blurred background
-                    if target_H > target_W:
+                    # Decide composition based on canvas and source orientation
+                    # - If canvas is portrait OR source video is portrait: use photo-like contain + blurred background.
+                    # - Otherwise (landscape canvas with landscape source): cover scale + center crop.
+                    try:
+                        sw, sh = sub.size
+                        if not sw or not sh:
+                            raise Exception("invalid size")
+                    except Exception:
+                        try:
+                            frame0 = sub.get_frame(0)
+                            sh, sw = frame0.shape[0], frame0.shape[1]
+                        except Exception:
+                            sw, sh = target_W, target_H
+
+                    is_source_portrait = (sh > sw)
+                    if target_H > target_W or is_source_portrait:
                         filled = compose_video_fill_frame(
                             sub,
                             target_W,
@@ -616,7 +630,6 @@ def render_timeline(
                             blur_radius=int(bg_blur) if bg_blur is not None else 0,
                         )
                     else:
-                        # Landscape canvas: fill via cover scale + center crop (no background)
                         filled = normalize_video_to_frame(sub, target_W, target_H, preserve_native=False)
 
                     # apply transition fades per-clip to composed clip
