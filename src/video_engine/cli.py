@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--week",
         type=str,
-        help="ISO week string, e.g. 2026-W04",
+        help="ISO week string, e.g. 2026-W04 (required unless --scan-all)",
     )
 
     parser.add_argument(
@@ -89,6 +89,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--preserve-videos",
         action="store_true",
         help="When set, include video files at their original duration instead of trimming to planned duration.",
+    )
+
+    parser.add_argument(
+        "--scan-all",
+        action="store_true",
+        help="Scan all photos/videos under input directory recursively instead of ISO week subfolders.",
     )
 
     parser.add_argument(
@@ -134,22 +140,27 @@ def main(argv: Optional[List[str]] = None) -> int:
     args.transition = float(effective.get("transition", args.transition))
     args.bg_blur = float(effective.get("bg_blur", args.bg_blur))
 
-    # Require week for now
-    if not args.week:
-        parser.error("argument --week is required")
+    # Require week unless --scan-all is set
+    if not args.week and not getattr(args, "scan_all", False):
+        parser.error("argument --week is required unless --scan-all is provided")
 
-    # Compute week range
+    # Compute week range if provided
     from .app import run_e2e
-    from .utils import iso_week_to_range
-
-    start, end = iso_week_to_range(args.week)
+    if args.week:
+        from .utils import iso_week_to_range
+        start, end = iso_week_to_range(args.week)
+    else:
+        start, end = None, None
 
     if args.dry_run:
         # Dry run: report what would happen
-        from .scan import scan_week
+        from .scan import scan_week, scan_all
         from .timeline import build_timeline
 
-        items = scan_week(args.input, start, end)
+        if args.scan_all:
+            items = scan_all(args.input)
+        else:
+            items = scan_week(args.input, start, end)
         plans = build_timeline(items, target_seconds=float(args.duration))
         # Choose bgm summary
         bgm_choice = None
@@ -160,7 +171,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 files = sorted([p for p in args.bgm.iterdir() if p.is_file()])
                 bgm_choice = files[0] if files else None
 
-        print(f"Week: {args.week} -> {start.isoformat()}..{end.isoformat()}")
+        if args.scan_all:
+            print(f"Scan mode: all under {args.input}")
+        else:
+            print(f"Week: {args.week} -> {start.isoformat()}..{end.isoformat()}")
         print(f"Input dir: {args.input} - found {len(items)} media items")
         print(f"Timeline entries: {len(plans)}")
         print(f"Chosen BGM: {bgm_choice}")
@@ -186,5 +200,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         preserve_videos=bool(args.preserve_videos),
         bg_blur=float(args.bg_blur),
         resolution=args.resolution,
+        scan_all_flag=bool(args.scan_all),
     )
     return rc

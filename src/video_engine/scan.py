@@ -118,3 +118,40 @@ def scan_week(input_dir: Path, start_date: date, end_date: date) -> List[MediaIt
 
     items.sort(key=lambda it: it.timestamp)
     return items
+
+
+def scan_all(input_dir: Path) -> List[MediaItem]:
+    """Recursively scan all supported media files under `input_dir`.
+
+    - Photos: try EXIF DateTimeOriginal; fallback to file mtime
+    - Videos: fallback to file mtime
+    Returns a chronologically sorted list of MediaItem objects.
+    """
+    items: List[MediaItem] = []
+    if not input_dir.exists():
+        return items
+
+    for p in input_dir.rglob("*"):
+        if not p.is_file():
+            continue
+        ext = p.suffix.lower()
+        kind: Literal["photo", "video"] | None = None
+        if ext in PHOTO_EXTS:
+            kind = "photo"
+        elif ext in VIDEO_EXTS:
+            kind = "video"
+        else:
+            continue
+
+        ts: datetime | None = None
+        if kind == "photo":
+            ts = _read_photo_exif_timestamp(p)
+            if ts is None:
+                logger.debug("No EXIF timestamp for %s; fallback to mtime", p)
+        if ts is None:
+            ts = _file_mtime_timestamp(p)
+
+        items.append(MediaItem(path=p, kind=kind, timestamp=ts))
+
+    items.sort(key=lambda it: it.timestamp)
+    return items

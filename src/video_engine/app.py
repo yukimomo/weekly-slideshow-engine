@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, List
 
 from .utils import iso_week_to_range
-from .scan import scan_week, MediaItem, PHOTO_EXTS, VIDEO_EXTS
+from .scan import scan_week, scan_all, MediaItem, PHOTO_EXTS, VIDEO_EXTS
 from .timeline import build_timeline
 from .render import render_single_photo
 
@@ -42,6 +42,7 @@ def run_e2e(
     preserve_videos: bool = False,
     bg_blur: float = 6.0,
     resolution: tuple[int, int] | None = None,
+    scan_all_flag: bool = False,
 ) -> int:
     """Run a minimal end-to-end preview creation for the given ISO week.
 
@@ -49,7 +50,7 @@ def run_e2e(
     """
     start_date, end_date = iso_week_to_range(week)
 
-    items = scan_week(input_dir, start_date, end_date)
+    items = scan_all(input_dir) if scan_all_flag else scan_week(input_dir, start_date, end_date)
     if not items:
         # フォールバック: input_dir直下に平置きされたメディアを走査（テスト用途）
         fallback_items: List[MediaItem] = []
