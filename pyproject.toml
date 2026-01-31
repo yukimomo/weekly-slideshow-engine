@@ -16,3 +16,4 @@ where = ["src"]
 
 [project.optional-dependencies]
 test = ["pytest"]
+image = ["Pillow"]

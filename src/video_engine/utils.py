@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Tuple
 
 _ISO_WEEK_RE = re.compile(r"^(\d{4})-W(0[1-9]|[1-4][0-9]|5[0-3])$")
@@ -41,3 +41,20 @@ def iso_week_to_range(iso_week: str) -> Tuple[date, date]:
         raise ValueError(f"Invalid ISO week {iso_week!r}: {exc}") from exc
 
     return start, end
+
+
+def parse_exif_datetime(value: str) -> datetime:
+    """Parse EXIF DateTime strings of the form "YYYY:MM:DD HH:MM:SS".
+
+    Returns a naive ``datetime``. Raises ValueError on invalid format.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"EXIF datetime must be a string, got {type(value)!r}")
+
+    try:
+        date_part, time_part = value.strip().split(" ")
+        y, m, d = date_part.split(":")
+        hh, mm, ss = time_part.split(":")
+        return datetime(int(y), int(m), int(d), int(hh), int(mm), int(ss))
+    except Exception as exc:
+        raise ValueError(f"Invalid EXIF datetime format: {value!r}") from exc
