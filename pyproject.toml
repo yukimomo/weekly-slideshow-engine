@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "weekly-slideshow-engine"
+version = "0.0.0"
+description = "Weekly slideshow engine (MVP skeleton)"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{name = "Your Name"}]
+keywords = ["video", "cli"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.optional-dependencies]
+test = ["pytest"]

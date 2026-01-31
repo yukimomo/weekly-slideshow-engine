@@ -1,0 +1,9 @@
+# Local directories
+input/
+output/
+__pycache__/
+.venv/
+.pytest_cache/
+dist/
+build/
+*.egg-info
