@@ -229,14 +229,26 @@ def render_timeline(
             else:
                 # video
                 vf = VideoFileClip(str(path))
-                # ensure we don't request beyond video duration
                 try:
-                    sub = vf.subclip(0, min(dur, vf.duration))
+                    # Source duration may be None or 0; be defensive
+                    src_dur = getattr(vf, "duration", None)
+                    use_dur = float(dur)
+                    if src_dur and float(src_dur) > 0:
+                        use_dur = min(float(src_dur), use_dur)
+
+                    # Trim to available duration. If source is shorter than target, we keep the short clip
+                    try:
+                        sub = vf.subclip(0, float(use_dur))
+                    except Exception:
+                        # fallback to setting duration attribute and use vf
+                        vf.duration = float(use_dur)
+                        sub = vf
+
+                    clips.append(sub)
                 except Exception:
-                    # fallback to setting duration
-                    vf.duration = dur
-                    sub = vf
-                clips.append(sub)
+                    # ensure we close vf on error to avoid leaks
+                    _close_clip_safe(vf)
+                    raise
 
         final = concatenate_videoclips(clips, method="compose")
 
@@ -279,6 +291,12 @@ def render_timeline(
                 final = final.set_audio(audio_clip)
             except Exception:
                 final.audio = audio_clip
+        else:
+            # No bgm requested: ensure final has no audio to avoid mixing original clip audio
+            try:
+                final = final.without_audio()
+            except Exception:
+                final.audio = None
 
         # Ensure output dir exists
         output_path.parent.mkdir(parents=True, exist_ok=True)

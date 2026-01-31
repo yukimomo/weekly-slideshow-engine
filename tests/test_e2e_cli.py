@@ -58,6 +58,21 @@ def test_e2e_cli_creates_preview(tmp_path: Path) -> None:
         img.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc`\x00\x00\x00\x02\x00\x01\xe2!\xbc3\x00\x00\x00\x00IEND\xaeB`\x82")
         img2.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc`\x00\x00\x00\x02\x00\x01\xe2!\xbc3\x00\x00\x00\x00IEND\xaeB`\x82")
 
+    # Also add a tiny MP4 to exercise video handling
+    v = date_dir / "t.mp4"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=blue:s=160x120:d=0.5",
+        "-r",
+        "10",
+        str(v),
+    ]
+    subprocess.run(cmd, capture_output=True, check=True, timeout=10)
+
     bgm_dir = tmp_path / "bgm"
     bgm_dir.mkdir()
     wav = bgm_dir / "bgm.wav"
