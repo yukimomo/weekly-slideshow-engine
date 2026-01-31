@@ -41,9 +41,8 @@ def test_help_shows_usage_or_description() -> None:
     ), f"Help output did not contain expected text. stdout={proc.stdout!r} stderr={proc.stderr!r}"
 
 
-def test_no_args_prints_startup_message() -> None:
+def test_no_args_requires_week() -> None:
     proc = _run_module([])
-    assert proc.returncode == 0, f"No-arg run exited non-zero. stdout={proc.stdout!r} stderr={proc.stderr!r}"
-
-    expected = "video_engine initialized (MVP). This is a skeleton CLI."
-    assert expected in proc.stdout, f"Expected startup message not found. stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    # CLI now requires --week; verify it fails with a useful message.
+    assert proc.returncode != 0, f"Expected non-zero exit when --week missing. stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "argument --week is required" in (proc.stderr or ""), f"stderr did not mention missing --week. stderr={proc.stderr!r}"

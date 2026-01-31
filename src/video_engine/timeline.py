@@ -55,11 +55,21 @@ def build_timeline(
 
     # Trim if over target_seconds
     if total(plans) > target_seconds:
-        # drop from end until total <= target
-        while plans and total(plans) > target_seconds:
+        # Remove clips from the end while we have more than one clip and still exceed target.
+        while len(plans) > 1 and total(plans) > target_seconds:
             plans.pop()
 
-        # Adjust last clip to fill the remainder, with minimum 0.1s
+        # If only one clip remains, adjust its duration to the target (if reasonable)
+        if len(plans) == 1 and total(plans) > target_seconds:
+            remainder = target_seconds
+            if remainder >= 0.1:
+                plans[0].duration = remainder
+                return plans
+            else:
+                # Can't represent a clip with such a small duration
+                return []
+
+        # Otherwise, adjust the last clip to fill the remaining seconds, dropping it if the remainder would be too small
         while plans:
             prev_sum = total(plans[:-1])
             remainder = target_seconds - prev_sum
@@ -67,7 +77,6 @@ def build_timeline(
                 plans[-1].duration = remainder
                 break
             else:
-                # remainder too small; drop the last clip and try again
                 plans.pop()
         return plans
 

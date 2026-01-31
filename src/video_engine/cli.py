@@ -50,6 +50,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--duration",
+        type=float,
+        default=8.0,
+        help="Duration in seconds for the preview video (default: 8.0)",
+    )
+
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Perform a dry run without making changes.",
@@ -66,8 +73,40 @@ def main(argv: Optional[List[str]] = None) -> int:
     a friendly startup message.
     """
     parser = build_parser()
-    _ = parser.parse_args(argv)
+    args = parser.parse_args(argv)
 
-    # Minimal runtime behavior for the MVP skeleton.
-    print("video_engine initialized (MVP). This is a skeleton CLI.")
-    return 0
+    # Require week for now
+    if not args.week:
+        parser.error("argument --week is required")
+
+    # Compute week range
+    from .app import run_e2e
+    from .utils import iso_week_to_range
+
+    start, end = iso_week_to_range(args.week)
+
+    if args.dry_run:
+        # Dry run: report what would happen
+        from .scan import scan_week
+        from .timeline import build_timeline
+
+        items = scan_week(args.input, start, end)
+        plans = build_timeline(items, target_seconds=float(args.duration))
+        # Choose bgm summary
+        bgm_choice = None
+        if args.bgm and args.bgm.exists():
+            if args.bgm.is_file():
+                bgm_choice = args.bgm
+            else:
+                files = sorted([p for p in args.bgm.iterdir() if p.is_file()])
+                bgm_choice = files[0] if files else None
+
+        print(f"Week: {args.week} -> {start.isoformat()}..{end.isoformat()}")
+        print(f"Input dir: {args.input} - found {len(items)} media items")
+        print(f"Timeline entries: {len(plans)}")
+        print(f"Chosen BGM: {bgm_choice}")
+        return 0
+
+    # Non-dry run: run end-to-end
+    rc = run_e2e(args.week, args.input, args.bgm, args.output, duration=float(args.duration), fps=30)
+    return rc
