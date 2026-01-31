@@ -174,11 +174,16 @@ def render_timeline(
     fade_in: float = 0.5,
     fade_out: float = 0.5,
     transition: float = 0.3,
+    bg_blur: float = 6.0,
     preserve_videos: bool = False,
 ) -> None:
     """Render a sequence of ClipPlans into a single MP4 file by concatenation.
 
     Plans should be an iterable of objects with (path, kind, duration) attributes.
+
+    Parameters:
+    - bg_blur: blur radius applied to the BACKGROUND layer for PHOTO clips only.
+      Set to 0 to disable blur. Default preserves previous behavior (6).
 
     preserve_videos: when True, use the original video file's duration for video clips
     instead of restricting them to the planned duration. Defaults to False.
@@ -376,18 +381,35 @@ def render_timeline(
         # Background: cover-scale to fill canvas
         bg = ensure_frame_size(imgclip, W, H)
 
-        # For portrait images, increase blur radius a bit for better separation
-        br = blur_radius * 2 if sh > sw else blur_radius
-
-        # Blur background if available
-        if video_blur_func is not None:
-            try:
-                try:
-                    bg = video_blur_func(bg, br)
-                except TypeError:
-                    bg = bg.fx(video_blur_func, br)
-            except Exception:
-                pass
+        # Pillowで確実に強いぼかしをかけてからImageClip化
+        from PIL import Image, ImageFilter
+        import numpy as np
+        # imgclipがImageClip型ならfilename属性またはimgclip.get_frame(0)から画像取得
+        pil_img = None
+        try:
+            if hasattr(imgclip, 'filename') and imgclip.filename:
+                pil_img = Image.open(imgclip.filename).convert("RGB")
+            else:
+                arr = imgclip.get_frame(0)
+                pil_img = Image.fromarray(arr)
+        except Exception:
+            pil_img = None
+        if pil_img is not None:
+            # coverスケール
+            scale = max(W / pil_img.width, H / pil_img.height)
+            newsize = (int(pil_img.width * scale), int(pil_img.height * scale))
+            pil_img = pil_img.resize(newsize, Image.LANCZOS)
+            # 強いぼかし（portraitは4倍, landscapeは2倍）
+            br = int(blur_radius * (4 if sh > sw else 2))
+            if br > 0:
+                pil_img = pil_img.filter(ImageFilter.GaussianBlur(radius=br))
+            # 中央クロップ
+            left = (pil_img.width - W) // 2
+            top = (pil_img.height - H) // 2
+            pil_img = pil_img.crop((left, top, left + W, top + H))
+            # ImageClip化
+            bg = ImageClip(np.array(pil_img)).set_duration(imgclip.duration)
+        # ...existing code...
 
         # Foreground: contain scale but do not upscale for portrait images
         try:
@@ -414,23 +436,7 @@ def render_timeline(
         except Exception:
             pass
 
-        try:
-            # Debug: if a tmp_debug folder exists, write intermediate frames for diagnosis
-            try:
-                from pathlib import Path
-
-                dbg = Path("tmp_debug")
-                if dbg.exists():
-                    try:
-                        bg.save_frame(str(dbg / "dbg_bg.png"), t=0)
-                    except Exception:
-                        pass
-                    try:
-                        fg.save_frame(str(dbg / "dbg_fg.png"), t=0)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+        # ...existing code...
 
             comp = CompositeVideoClip([bg.set_position((0, 0)), fg], size=(W, H))
             # Debug: save composed frame if requested
@@ -559,7 +565,7 @@ def render_timeline(
                     c.duration = dur
 
                 # Compose photo with blurred background and centered foreground
-                filled = compose_photo_fill_frame(c, target_W, target_H)
+                filled = compose_photo_fill_frame(c, target_W, target_H, blur_radius=int(bg_blur) if bg_blur is not None else 0)
 
                 # apply transition fades per-clip to composed clip
                 if transition and transition > 0:

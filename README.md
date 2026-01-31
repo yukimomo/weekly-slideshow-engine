@@ -59,13 +59,14 @@ builds and renders a short preview video for an ISO week. Common options:
   resolution and (when multiple videos exist) the canvas size is chosen as
   the maximum width/height among the videos. Videos will be centered on the
   canvas and not rescaled; photos are fit to the canvas.
-- `--dry-run`: show what would be done without creating output files
+
+- `--bg-blur <float>`: Blur radius for the background of portrait photos (default `6.0`). Set `0` to disable background blur. This affects only the blurred background layer for portrait-oriented写真。例: `--bg-blur 0`でぼかし無し、`--bg-blur 12`で強いぼかし。
 
 Example:
 
 ```bash
 python -m video_engine --week 2026-W04 --input ./input --bgm ./bgm \
-  --output ./output --duration 60 --transition 0.3 --preserve-videos
+  --output ./output --duration 60 --transition 0.3 --preserve-videos --bg-blur 8
 ```
 
 ## Running render smoke tests

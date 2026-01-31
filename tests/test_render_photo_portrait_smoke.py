@@ -81,3 +81,51 @@ def test_portrait_foreground_not_upscaled(tmp_path: Path) -> None:
 
     # Expect roughly the marker size (8x8 ~=64). Allow a wide tolerance; if foreground was upscaled many more will be white.
     assert 10 < count < 500
+
+
+def test_portrait_bg_blur_cli(tmp_path: Path) -> None:
+    """CLI経由で--bg-blur=0と--bg-blur=6を指定し、背景ぼかしの有無を確認する。"""
+    img = tmp_path / "portrait.png"
+    _make_portrait_marker(img, 80, 160)
+    out0 = tmp_path / "out_blur0.mp4"
+    out6 = tmp_path / "out_blur6.mp4"
+
+    # --bg-blur=0
+    cmd0 = [
+        "python", "-m", "video_engine",
+        "--week", "2026-W04",
+        "--input", str(tmp_path),
+        "--output", str(tmp_path),
+        "--duration", "0.5",
+        "--bg-blur", "0",
+        "--transition", "0",
+    ]
+    subprocess.run(cmd0, capture_output=True, check=True, timeout=20)
+    out_mp40 = tmp_path / "2026-W04_preview.mp4"
+    assert out_mp40.exists() and out_mp40.stat().st_size > 0
+    frame0 = tmp_path / "frame0.png"
+    _extract_frame(out_mp40, frame0, t=0.3)
+
+    # --bg-blur=6
+    cmd6 = [
+        "python", "-m", "video_engine",
+        "--week", "2026-W04",
+        "--input", str(tmp_path),
+        "--output", str(tmp_path),
+        "--duration", "0.5",
+        "--bg-blur", "6",
+        "--transition", "0",
+    ]
+    subprocess.run(cmd6, capture_output=True, check=True, timeout=20)
+    out_mp46 = tmp_path / "2026-W04_preview.mp4"
+    assert out_mp46.exists() and out_mp46.stat().st_size > 0
+    frame6 = tmp_path / "frame6.png"
+    _extract_frame(out_mp46, frame6, t=0.3)
+
+    from PIL import Image, ImageChops
+    im0 = Image.open(frame0).convert("RGB")
+    im6 = Image.open(frame6).convert("RGB")
+    # 差分画像を作成し、全く同じでないこと（ぼかし有無で背景が変わる）
+    diff = ImageChops.difference(im0, im6)
+    bbox = diff.getbbox()
+    assert bbox is not None, "blur=0とblur=6で背景が変化しているはず"

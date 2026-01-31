@@ -75,6 +75,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Perform a dry run without making changes.",
     )
 
+    parser.add_argument(
+        "--bg-blur",
+        type=float,
+        default=6.0,
+        help="Blur radius for background of portrait photos (default: 6.0, set 0 to disable)",
+    )
+
     return parser
 
 
@@ -120,6 +127,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Chosen BGM: {bgm_choice}")
         print(f"Transition: {float(args.transition)}s")
         print(f"Preserve videos: {bool(args.preserve_videos)}")
+        print(f"Background blur: {float(args.bg_blur)}")
         return 0
 
     # Non-dry run: run end-to-end
@@ -132,5 +140,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         fps=30,
         transition=float(args.transition),
         preserve_videos=bool(args.preserve_videos),
+        bg_blur=float(args.bg_blur),
     )
     return rc
