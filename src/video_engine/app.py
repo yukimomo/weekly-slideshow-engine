@@ -39,6 +39,7 @@ def run_e2e(
     duration: float = 8.0,
     fps: int = 30,
     transition: float = 0.3,
+    preserve_videos: bool = False,
 ) -> int:
     """Run a minimal end-to-end preview creation for the given ISO week.
 
@@ -71,6 +72,7 @@ def run_e2e(
         fade_in=0.5,
         fade_out=0.5,
         transition=transition,
+        preserve_videos=preserve_videos,
     )
 
     print(f"Wrote preview: {out_path}")

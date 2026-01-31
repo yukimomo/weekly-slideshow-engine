@@ -44,6 +44,30 @@ pip install -r requirements.txt
 
 ---
 
+## CLI usage
+
+The project provides a small CLI wrapper (`python -m video_engine`) that
+builds and renders a short preview video for an ISO week. Common options:
+
+- `--week <ISO>`: ISO week string, e.g. `2026-W04` (required)
+- `--input <path>`: input directory (default `./input`)
+- `--bgm <path>`: BGM file or directory (default `./bgm`)
+- `--output <path>`: output directory (default `./output`)
+- `--duration <seconds>`: target preview duration in seconds (default `8.0`)
+- `--transition <seconds>`: per-clip fade-in/out length (default `0.3`)
+- `--preserve-videos`: when set, video files are included at their native
+  resolution and (when multiple videos exist) the canvas size is chosen as
+  the maximum width/height among the videos. Videos will be centered on the
+  canvas and not rescaled; photos are fit to the canvas.
+- `--dry-run`: show what would be done without creating output files
+
+Example:
+
+```bash
+python -m video_engine --week 2026-W04 --input ./input --bgm ./bgm \
+  --output ./output --duration 60 --transition 0.3 --preserve-videos
+```
+
 ## Running render smoke tests
 
 Some smoke and end-to-end tests require a fully usable MoviePy installation and `ffmpeg` on `PATH`.

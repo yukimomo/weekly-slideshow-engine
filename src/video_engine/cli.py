@@ -64,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--preserve-videos",
+        action="store_true",
+        help="When set, include video files at their original duration instead of trimming to planned duration.",
+    )
+
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Perform a dry run without making changes.",
@@ -113,8 +119,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Timeline entries: {len(plans)}")
         print(f"Chosen BGM: {bgm_choice}")
         print(f"Transition: {float(args.transition)}s")
+        print(f"Preserve videos: {bool(args.preserve_videos)}")
         return 0
 
     # Non-dry run: run end-to-end
-    rc = run_e2e(args.week, args.input, args.bgm, args.output, duration=float(args.duration), fps=30)
+    rc = run_e2e(
+        args.week,
+        args.input,
+        args.bgm,
+        args.output,
+        duration=float(args.duration),
+        fps=30,
+        transition=float(args.transition),
+        preserve_videos=bool(args.preserve_videos),
+    )
     return rc
