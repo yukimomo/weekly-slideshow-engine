@@ -1,2 +1,5 @@
 # weekly-slideshow-engine
-Automatically generates a weekly 1-minute slideshow video from photos and videos using Python and MoviePy.
+
+A Python-based engine that automatically generates a weekly 1-minute slideshow
+video from photos and videos. Designed for fully automated, rule-based video
+composition using MoviePy.
