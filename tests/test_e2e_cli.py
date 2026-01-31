@@ -16,6 +16,12 @@ import math
 from pathlib import Path
 
 import pytest
+import conftest
+
+pytestmark = [
+    pytest.mark.skipif(not conftest.moviepy_usable(), reason="moviepy not usable (partial/misinstalled)"),
+    pytest.mark.skipif(not conftest.ffmpeg_available(), reason="ffmpeg not available in PATH"),
+]
 
 
 def _run_module(args: list[str], env_extra: dict | None = None) -> subprocess.CompletedProcess:
@@ -32,10 +38,7 @@ def _run_module(args: list[str], env_extra: dict | None = None) -> subprocess.Co
     return subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
 
 
-@pytest.mark.skipif(__import__("importlib").util.find_spec("moviepy") is None, reason="moviepy not installed")
 def test_e2e_cli_creates_preview(tmp_path: Path) -> None:
-    if shutil.which("ffmpeg") is None:
-        pytest.skip("ffmpeg not available in PATH")
 
     # Setup repo-like input
     input_dir = tmp_path / "input"
@@ -43,13 +46,17 @@ def test_e2e_cli_creates_preview(tmp_path: Path) -> None:
     date_dir.mkdir(parents=True)
 
     img = date_dir / "img.png"
+    img2 = date_dir / "img2.png"
     try:
         from PIL import Image
 
         im = Image.new("RGB", (32, 32), color="purple")
         im.save(img)
+        im2 = Image.new("RGB", (32, 32), color="orange")
+        im2.save(img2)
     except Exception:
         img.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc`\x00\x00\x00\x02\x00\x01\xe2!\xbc3\x00\x00\x00\x00IEND\xaeB`\x82")
+        img2.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc`\x00\x00\x00\x02\x00\x01\xe2!\xbc3\x00\x00\x00\x00IEND\xaeB`\x82")
 
     bgm_dir = tmp_path / "bgm"
     bgm_dir.mkdir()
@@ -82,7 +89,6 @@ def test_e2e_cli_creates_preview(tmp_path: Path) -> None:
     assert expected.exists() and expected.stat().st_size > 0
 
 
-@pytest.mark.skipif(__import__("importlib").util.find_spec("moviepy") is None, reason="moviepy not installed")
 def test_e2e_cli_dry_run(tmp_path: Path) -> None:
     # Dry run should not create files
     input_dir = tmp_path / "input"

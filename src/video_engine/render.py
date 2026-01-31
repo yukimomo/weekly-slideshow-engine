@@ -147,3 +147,155 @@ def render_single_photo(
         clip.write_videofile(str(output_path), **write_kwargs)
     except Exception as exc:  # pragma: no cover - depends on runtime ffmpeg
         raise RuntimeError(f"Failed to render video: {exc}") from exc
+
+
+def _close_clip_safe(c):
+    try:
+        c.close()
+    except Exception:
+        pass
+
+
+def render_timeline(
+    plans: list,
+    output_path: Path,
+    fps: int = 30,
+    bgm_path: Optional[Path] = None,
+    fade_in: float = 0.5,
+    fade_out: float = 0.5,
+) -> None:
+    """Render a sequence of ClipPlans into a single MP4 file by concatenation.
+
+    Plans should be an iterable of objects with (path, kind, duration) attributes.
+    """
+    if not plans:
+        raise ValueError("plans must be non-empty")
+
+    try:
+        # Prefer the convenient editor import
+        try:
+            from moviepy.editor import ImageClip, VideoFileClip, concatenate_videoclips, AudioFileClip
+        except Exception:
+            # Fallback imports for different MoviePy structures
+            from moviepy.video.VideoClip import ImageClip  # type: ignore
+            from moviepy.video.io.VideoFileClip import VideoFileClip  # type: ignore
+            from moviepy.video.compositing.concatenate import concatenate_videoclips  # type: ignore
+            from moviepy.audio.io.AudioFileClip import AudioFileClip  # type: ignore
+    except Exception as exc:  # pragma: no cover - depends on environment
+        raise RuntimeError(
+            "moviepy is required for rendering; install the 'render' extras (e.g., pip install -e \".[render]\")"
+        ) from exc
+
+    # Reuse audio fx helpers (classes or functions)
+    AudioLoopClass = None
+    AudioFadeInClass = None
+    AudioFadeOutClass = None
+    audio_loop = None
+    audio_fadein = None
+    audio_fadeout = None
+    try:
+        import moviepy.audio.fx.all as afx
+        audio_loop = getattr(afx, "audio_loop", None)
+        audio_fadein = getattr(afx, "audio_fadein", None)
+        audio_fadeout = getattr(afx, "audio_fadeout", None)
+    except Exception:
+        try:
+            from moviepy.audio.fx.AudioLoop import AudioLoop as AudioLoopClass
+        except Exception:
+            AudioLoopClass = None
+        try:
+            from moviepy.audio.fx.AudioFadeIn import AudioFadeIn as AudioFadeInClass
+        except Exception:
+            AudioFadeInClass = None
+        try:
+            from moviepy.audio.fx.AudioFadeOut import AudioFadeOut as AudioFadeOutClass
+        except Exception:
+            AudioFadeOutClass = None
+
+    clips = []
+    try:
+        for p in plans:
+            path = Path(p.path)
+            if not path.exists() or not path.is_file():
+                raise FileNotFoundError(f"Clip not found: {path}")
+            dur = float(p.duration)
+            if p.kind == "photo":
+                c = ImageClip(str(path))
+                try:
+                    c = c.with_duration(dur)
+                except Exception:
+                    c.duration = dur
+                clips.append(c)
+            else:
+                # video
+                vf = VideoFileClip(str(path))
+                # ensure we don't request beyond video duration
+                try:
+                    sub = vf.subclip(0, min(dur, vf.duration))
+                except Exception:
+                    # fallback to setting duration
+                    vf.duration = dur
+                    sub = vf
+                clips.append(sub)
+
+        final = concatenate_videoclips(clips, method="compose")
+
+        audio_clip = None
+        if bgm_path is not None:
+            audio = AudioFileClip(str(bgm_path))
+            total_dur = final.duration
+            if audio.duration < total_dur:
+                if audio_loop is not None:
+                    audio = audio_loop(audio, duration=total_dur)
+                elif AudioLoopClass is not None:
+                    audio = audio.with_effects([AudioLoopClass(duration=total_dur)])
+                else:
+                    n = int(total_dur / audio.duration) + 1
+                    new_audio = audio
+                    for _ in range(n - 1):
+                        new_audio = new_audio + audio
+                    audio = new_audio.subclip(0, float(total_dur))
+            else:
+                audio = audio.subclip(0, float(total_dur))
+
+            max_fade = float(total_dur) / 2.0
+            fi = min(float(fade_in), max_fade)
+            fo = min(float(fade_out), max_fade)
+
+            if fi > 0:
+                if audio_fadein is not None:
+                    audio = audio_fadein(audio, fi)
+                elif AudioFadeInClass is not None:
+                    audio = audio.with_effects([AudioFadeInClass(fi)])
+            if fo > 0:
+                if audio_fadeout is not None:
+                    audio = audio_fadeout(audio, fo)
+                elif AudioFadeOutClass is not None:
+                    audio = audio.with_effects([AudioFadeOutClass(fo)])
+
+            audio_clip = audio
+            # set audio
+            try:
+                final = final.set_audio(audio_clip)
+            except Exception:
+                final.audio = audio_clip
+
+        # Ensure output dir exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        write_kwargs = dict(fps=int(fps), codec="libx264")
+        if audio_clip is not None:
+            write_kwargs.update(dict(audio=True, audio_codec="aac"))
+        else:
+            write_kwargs.update(dict(audio=False))
+
+        final.write_videofile(str(output_path), **write_kwargs)
+    finally:
+        # Close clips to avoid file locks
+        for c in clips:
+            _close_clip_safe(c)
+        try:
+            _close_clip_safe(final)
+        except Exception:
+            pass
+

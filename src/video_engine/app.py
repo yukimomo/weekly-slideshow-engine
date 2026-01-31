@@ -52,15 +52,6 @@ def run_e2e(
 
     plans = build_timeline(items, target_seconds=duration)
 
-    # Choose first photo clip, otherwise first clip
-    chosen = None
-    for p in plans:
-        if p.kind == "photo":
-            chosen = p
-            break
-    if chosen is None:
-        chosen = plans[0]
-
     # Ensure output dir exists
     output_dir.mkdir(parents=True, exist_ok=True)
     week_s = _sanitize_week(week)
@@ -68,7 +59,10 @@ def run_e2e(
 
     bgm_choice = _choose_bgm(bgm)
 
-    render_single_photo(Path(chosen.path), out_path, duration=duration, fps=fps, bgm_path=bgm_choice, fade_in=0.5, fade_out=0.5)
+    # Render full timeline by concatenating the planned clips
+    from .render import render_timeline
+
+    render_timeline(plans, out_path, fps=fps, bgm_path=bgm_choice, fade_in=0.5, fade_out=0.5)
 
     print(f"Wrote preview: {out_path}")
     return 0

@@ -40,3 +40,21 @@ a consistent, ready-to-watch weekly video without manual editing.
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+```
+
+---
+
+## Running render smoke tests
+
+Some smoke and end-to-end tests require a fully usable MoviePy installation and `ffmpeg` on `PATH`.
+
+Requirements:
+- Python 3.11+
+- `ffmpeg` available in `PATH`
+- MoviePy installed with the `render` extras
+
+Recommended setup (installs MoviePy and other render dependencies):
+
+```bash
+pip install -e ".[render]"
+```
