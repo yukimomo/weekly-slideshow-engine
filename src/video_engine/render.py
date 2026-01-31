@@ -163,6 +163,7 @@ def render_timeline(
     bgm_path: Optional[Path] = None,
     fade_in: float = 0.5,
     fade_out: float = 0.5,
+    transition: float = 0.3,
 ) -> None:
     """Render a sequence of ClipPlans into a single MP4 file by concatenation.
 
@@ -193,6 +194,9 @@ def render_timeline(
     audio_loop = None
     audio_fadein = None
     audio_fadeout = None
+    # Video fade helpers
+    video_fadein_func = None
+    video_fadeout_func = None
     try:
         import moviepy.audio.fx.all as afx
         audio_loop = getattr(afx, "audio_loop", None)
@@ -212,6 +216,21 @@ def render_timeline(
         except Exception:
             AudioFadeOutClass = None
 
+    # Video fade function fallbacks
+    try:
+        import moviepy.video.fx.all as vfx
+        video_fadein_func = getattr(vfx, "fadein", None)
+        video_fadeout_func = getattr(vfx, "fadeout", None)
+    except Exception:
+        try:
+            from moviepy.video.fx.fadein import fadein as video_fadein_func  # type: ignore
+        except Exception:
+            video_fadein_func = None
+        try:
+            from moviepy.video.fx.fadeout import fadeout as video_fadeout_func  # type: ignore
+        except Exception:
+            video_fadeout_func = None
+
     clips = []
     try:
         for p in plans:
@@ -225,6 +244,34 @@ def render_timeline(
                     c = c.with_duration(dur)
                 except Exception:
                     c.duration = dur
+                # apply transition fades per-clip
+                if transition and transition > 0:
+                    t = min(float(transition), float(c.duration) / 2.0)
+                    if t > 0:
+                        applied = False
+                        if video_fadein_func is not None:
+                            try:
+                                c = video_fadein_func(c, t)
+                                applied = True
+                            except Exception:
+                                applied = False
+                        if not applied and hasattr(c, "fadein"):
+                            try:
+                                c = c.fadein(t)
+                            except Exception:
+                                pass
+                        applied = False
+                        if video_fadeout_func is not None:
+                            try:
+                                c = video_fadeout_func(c, t)
+                                applied = True
+                            except Exception:
+                                applied = False
+                        if not applied and hasattr(c, "fadeout"):
+                            try:
+                                c = c.fadeout(t)
+                            except Exception:
+                                pass
                 clips.append(c)
             else:
                 # video
@@ -243,6 +290,35 @@ def render_timeline(
                         # fallback to setting duration attribute and use vf
                         vf.duration = float(use_dur)
                         sub = vf
+
+                    # apply transition fades per-clip
+                    if transition and transition > 0:
+                        t = min(float(transition), float(sub.duration) / 2.0)
+                        if t > 0:
+                            applied = False
+                            if video_fadein_func is not None:
+                                try:
+                                    sub = video_fadein_func(sub, t)
+                                    applied = True
+                                except Exception:
+                                    applied = False
+                            if not applied and hasattr(sub, "fadein"):
+                                try:
+                                    sub = sub.fadein(t)
+                                except Exception:
+                                    pass
+                            applied = False
+                            if video_fadeout_func is not None:
+                                try:
+                                    sub = video_fadeout_func(sub, t)
+                                    applied = True
+                                except Exception:
+                                    applied = False
+                            if not applied and hasattr(sub, "fadeout"):
+                                try:
+                                    sub = sub.fadeout(t)
+                                except Exception:
+                                    pass
 
                     clips.append(sub)
                 except Exception:

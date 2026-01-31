@@ -57,6 +57,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--transition",
+        type=float,
+        default=0.3,
+        help="Per-clip transition length in seconds (fade-in/out, default: 0.3). Set 0 to disable.",
+    )
+
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Perform a dry run without making changes.",
@@ -105,6 +112,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Input dir: {args.input} - found {len(items)} media items")
         print(f"Timeline entries: {len(plans)}")
         print(f"Chosen BGM: {bgm_choice}")
+        print(f"Transition: {float(args.transition)}s")
         return 0
 
     # Non-dry run: run end-to-end

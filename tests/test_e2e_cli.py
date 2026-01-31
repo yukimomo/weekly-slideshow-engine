@@ -97,7 +97,7 @@ def test_e2e_cli_creates_preview(tmp_path: Path) -> None:
     out_dir.mkdir()
 
     # Run real render for 2 seconds
-    proc = _run_module(["--week", "2026-W04", "--input", str(input_dir), "--bgm", str(bgm_dir), "--output", str(out_dir), "--duration", "2"])
+    proc = _run_module(["--week", "2026-W04", "--input", str(input_dir), "--bgm", str(bgm_dir), "--output", str(out_dir), "--duration", "2", "--transition", "0.2"])
     assert proc.returncode == 0, f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}"
 
     expected = out_dir / "2026-W04_preview.mp4"

@@ -38,6 +38,7 @@ def run_e2e(
     output_dir: Path,
     duration: float = 8.0,
     fps: int = 30,
+    transition: float = 0.3,
 ) -> int:
     """Run a minimal end-to-end preview creation for the given ISO week.
 
@@ -62,7 +63,15 @@ def run_e2e(
     # Render full timeline by concatenating the planned clips
     from .render import render_timeline
 
-    render_timeline(plans, out_path, fps=fps, bgm_path=bgm_choice, fade_in=0.5, fade_out=0.5)
+    render_timeline(
+        plans,
+        out_path,
+        fps=fps,
+        bgm_path=bgm_choice,
+        fade_in=0.5,
+        fade_out=0.5,
+        transition=transition,
+    )
 
     print(f"Wrote preview: {out_path}")
     return 0
