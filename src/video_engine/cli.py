@@ -119,6 +119,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Blur radius for background of portrait photos (default: 6.0, set 0 to disable)",
     )
 
+    parser.add_argument(
+        "--bgm-volume",
+        type=float,
+        default=60.0,
+        help="BGM volume level as percentage of original video audio (default: 60.0, range: 0-200)",
+    )
+
     return parser
 
 
@@ -144,6 +151,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "duration": float(args.duration),
         "transition": float(args.transition),
         "bg_blur": float(args.bg_blur),
+        "bgm_volume": float(args.bgm_volume),
     }
     effective = merge_preset(getattr(args, "preset", None), base, provided)
     # Reflect effective values back to args
@@ -151,6 +159,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args.duration = float(effective.get("duration", args.duration))
     args.transition = float(effective.get("transition", args.transition))
     args.bg_blur = float(effective.get("bg_blur", args.bg_blur))
+    args.bgm_volume = float(effective.get("bgm_volume", args.bgm_volume))
 
     # Week is optional; scanning behavior controlled by --scan-all
 
@@ -185,6 +194,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Effective duration: {float(args.duration)}s")
         print(f"Effective transition: {float(args.transition)}s")
         print(f"Effective bg_blur: {float(args.bg_blur)}")
+        print(f"Effective bgm_volume: {float(args.bgm_volume)}%")
         return 0
 
     # Non-dry run: run end-to-end
@@ -199,6 +209,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         fade_max_ratio=float(args.fade_max_ratio),
         preserve_videos=bool(args.preserve_videos),
         bg_blur=float(args.bg_blur),
+        bgm_volume=float(args.bgm_volume),
         resolution=args.resolution,
         scan_all_flag=bool(args.scan_all),
     )

@@ -62,6 +62,10 @@ pip install -r requirements.txt
 - `--bg-blur <float>`: 背景ぼかし半径（既定: 6.0、0で無効）。0を指定した場合、処理が20-30%高速化します。
   - 背景ぼかし有効（`> 0`）: 写真・動画ともに「前景contain＋背景ぼかし」処理（品質重視）
   - 背景ぼかし無効（`= 0`）: 「全面カバー拡大＋中央クロップ」で処理（高速処理）
+- `--bgm-volume <float>`: BGM音量をビデオ音声に対する百分率で指定（既定: 60.0、範囲: 0-200）。
+  - 60%: ビデオ音の話声を聞き取りやすいさりげない音量（推奨）
+  - 100%: BGMとビデオ音が同じ大きさ
+  - 0%: BGM無効（ビデオ音声のみ）
 - `--resolution <WIDTHxHEIGHT>`: 出力解像度（例: 1920x1080、1080x1920）。目安: 320x240～8192x4320。未指定時は既定を使用。
 - `--preset <name>`: プリセット（youtube / mobile / preview）。プリセット適用後に明示フラグが上書き。
 - `--dry-run`: 実行せず有効値とスキャン結果を表示（解像度／duration／transition／bg_blur など）。
@@ -96,11 +100,24 @@ set VIDEO_ENGINE_FFMPEG_CRF=23
 python -m video_engine --week 2026-W04 ...
 ```
 
+### BGM音声ミックス最適化
+
+BGM音量は FFmpeg の `amix` フィルタで複数の音声トラックをミックスします：
+
+1. **音量制御**: `--bgm-volume <percent>` でBGMの音量を調整
+   - ビデオ内の音声（スピーチ等）が聞き取りやすい60%がデフォルト
+   - 100% で BGM とビデオ音が同じ大きさ
+   
+2. **フェード処理**: BGMの開始・終了時にフェードイン/アウト
+   - `fade_in` / `fade_out` パラメータで制御
+
+3. **AAC エンコーディング**: `-q:a 8` で高品質オーディオを保証
+
 例:
 
 ```bash
 python -m video_engine --week 2026-W04 --input ./input --bgm ./bgm \
-  --output ./output --duration 60 --transition 0.3 --bg-blur 8 --resolution 1080x1920
+  --output ./output --duration 60 --transition 0.3 --bg-blur 8 --bgm-volume 60 --resolution 1080x1920
 ```
 
 プリセット＋ドライラン例:

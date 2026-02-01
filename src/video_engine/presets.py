@@ -12,23 +12,26 @@ PRESETS: Dict[str, Dict[str, object]] = {
         "resolution": (1920, 1080),
         "transition": 0.3,
         "bg_blur": 6.0,
+        "bgm_volume": 60.0,
         "duration": 60.0,
     },
     "mobile": {
         "resolution": (1080, 1920),
         "transition": 0.25,
         "bg_blur": 8.0,
+        "bgm_volume": 60.0,
         "duration": 60.0,
     },
     "preview": {
         "resolution": (1280, 720),
         "transition": 0.2,
         "bg_blur": 4.0,
+        "bgm_volume": 60.0,
         "duration": 8.0,
     },
 }
 
-OPTION_KEYS = {"resolution", "duration", "transition", "bg_blur"}
+OPTION_KEYS = {"resolution", "duration", "transition", "bg_blur", "bgm_volume"}
 
 
 def merge_preset(

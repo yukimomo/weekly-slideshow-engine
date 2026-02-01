@@ -15,6 +15,10 @@ import subprocess
 import sys
 from functools import lru_cache
 import tempfile
+import time
+import threading
+import queue
+from collections import deque
 
 # Pillow compatibility for Image.ANTIALIAS removal in recent versions.
 # Some MoviePy functions reference Image.ANTIALIAS; ensure it's defined.
@@ -285,6 +289,146 @@ def _get_ffmpeg_crf() -> int:
     return 28
 
 
+def _get_filter_scale() -> float:
+    """Return processing scale factor for filters (0.1-1.0). Default 1.0 for quality."""
+    val = os.environ.get("VIDEO_ENGINE_FILTER_SCALE", "").strip()
+    if val:
+        try:
+            f = float(val)
+            if 0.1 <= f <= 1.0:
+                return f
+        except Exception:
+            pass
+    return 1.0
+
+
+def _stage_video_path(path: Path, tmpdir: str, idx: int) -> Path:
+    """Stage OneDrive videos to a local temp path to avoid placeholder stalls."""
+    if "OneDrive" in str(path) or "OneDrive" in str(path.resolve()):
+        staged = Path(tmpdir) / f"staged_{idx:04d}{path.suffix.lower()}"
+        if not staged.exists():
+            print("[ffmpeg] Staging video to local cache...", flush=True)
+            shutil.copy2(path, staged)
+        return staged
+    return path
+
+
+def _build_video_input_opts() -> list[str]:
+    return [
+        "-hwaccel", "auto",
+        "-thread_queue_size", "512",
+        "-ignore_editlist", "1",
+        "-fflags", "+genpts+igndts",
+        "-probesize", "32k",
+        "-analyzeduration", "0",
+        "-fpsprobesize", "0",
+        "-sn",
+        "-dn",
+    ]
+
+
+def _build_base_cmd(vf: str, use_dur: float, fps: int) -> list[str]:
+    return [
+        "ffmpeg", "-y",
+        "-fflags", "+genpts",
+        "-t", str(use_dur),
+        "-r", str(int(fps)),
+        "-fps_mode", "cfr",
+        "-filter_complex_threads", "2",
+        "-filter_complex", f"{vf}[v]",
+        "-map", "[v]",
+        "-pix_fmt", "yuv420p",
+    ]
+
+
+def _write_concat_list(paths: list[Path], list_path: Path) -> None:
+    list_path.write_text("\n".join([f"file '{p.as_posix()}'" for p in paths]), encoding="utf-8")
+
+
+def _build_audio_extract_cmd(staged_path: Path, use_dur: float, out_audio: Path) -> list[str]:
+    return [
+        "ffmpeg", "-y",
+        "-i", str(staged_path),
+        "-t", str(use_dur),
+        "-vn",
+        "-map", "0:a:0",
+        "-ac", "2",
+        "-ar", "44100",
+        "-af", "aresample=async=1:first_pts=0",
+        "-c:a", "pcm_s16le",
+        str(out_audio),
+    ]
+
+
+def _build_silence_audio_cmd(use_dur: float, out_audio: Path) -> list[str]:
+    return [
+        "ffmpeg", "-y",
+        "-f", "lavfi",
+        "-t", str(use_dur),
+        "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+        "-ac", "2",
+        "-ar", "44100",
+        "-c:a", "pcm_s16le",
+        str(out_audio),
+    ]
+
+
+def _build_audio_concat_cmd(audio_list_path: Path, audio_concat: Path) -> list[str]:
+    return [
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0",
+        "-i", str(audio_list_path),
+        "-ac", "2",
+        "-ar", "44100",
+        "-c:a", "pcm_s16le",
+        str(audio_concat),
+    ]
+
+
+def _build_bgm_mix_cmd(
+    concat_out: Path,
+    audio_concat: Path,
+    bgm_path: Path,
+    total_dur: float,
+    afilter: str,
+    output_path: Path,
+) -> list[str]:
+    return [
+        "ffmpeg", "-y",
+        "-i", str(concat_out),
+        "-i", str(audio_concat),
+        "-stream_loop", "-1",
+        "-i", str(bgm_path),
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-q:a", "8",
+        "-map", "0:v:0",
+        "-map", "[out_audio]",
+        "-t", str(total_dur),
+        "-filter_complex", afilter,
+        "-movflags", "+faststart",
+        "-fflags", "+genpts",
+        str(output_path),
+    ]
+
+
+def _build_mux_cmd(concat_out: Path, audio_concat: Path, total_dur: float, output_path: Path) -> list[str]:
+    return [
+        "ffmpeg", "-y",
+        "-i", str(concat_out),
+        "-i", str(audio_concat),
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-q:a", "8",
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-t", str(total_dur),
+        "-movflags", "+faststart",
+        "-fflags", "+genpts",
+        str(output_path),
+    ]
+
+
 def _get_ffmpeg_encoder_args(codec: Optional[str]) -> list[str]:
     """Get ffmpeg encoder-specific arguments based on codec type.
     
@@ -330,6 +474,7 @@ def render_timeline(
     transition: float = 0.3,
     fade_max_ratio: float = 1.0,
     bg_blur: float = 6.0,
+    bgm_volume: float = 60.0,
     preserve_videos: bool = False,
     resolution: tuple[int, int] | None = None,
 ) -> None:
@@ -340,6 +485,8 @@ def render_timeline(
     Parameters:
     - bg_blur: blur radius applied to the BACKGROUND layer for PHOTO clips only.
       Set to 0 to disable blur. Default preserves previous behavior (6).
+    - bgm_volume: BGM volume as percentage (0-200), where 100 is equal to video audio.
+      Default is 60 (60% of video audio level).
 
     preserve_videos: when True, use the original video file's duration for video clips
     instead of restricting them to the planned duration. Defaults to False.
@@ -360,12 +507,13 @@ def render_timeline(
                 transition=transition,
                 fade_max_ratio=fade_max_ratio,
                 bg_blur=bg_blur,
+                bgm_volume=bgm_volume,
                 preserve_videos=preserve_videos,
                 resolution=resolution,
             )
-        except Exception:
-            # Fall back to MoviePy path if ffmpeg rendering fails
-            pass
+        except Exception as exc:
+            print(f"[ffmpeg] render failed: {exc}", flush=True)
+            raise
 
     # Prefer the convenient editor import
     try:
@@ -920,28 +1068,58 @@ def _run_ffmpeg(cmd: list[str], progress_total_sec: float | None = None, progres
         progress_cmd = cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
         proc = subprocess.Popen(progress_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         last_pct = -1
+        last_output = time.time()
+        start_time = time.time()
+        q: queue.Queue[str] = queue.Queue()
+        err_tail: deque[str] = deque(maxlen=200)
+
+        def _reader():
+            if not proc.stdout:
+                return
+            for line in proc.stdout:
+                q.put(line)
+
+        def _err_reader():
+            if not proc.stderr:
+                return
+            for line in proc.stderr:
+                err_tail.append(line)
+
+        t = threading.Thread(target=_reader, daemon=True)
+        t.start()
+        te = threading.Thread(target=_err_reader, daemon=True)
+        te.start()
         try:
             while True:
-                line = proc.stdout.readline() if proc.stdout else ""
-                if not line:
-                    if proc.poll() is not None:
-                        break
+                if proc.poll() is not None and q.empty():
+                    break
+                try:
+                    line = q.get(timeout=0.5)
+                except queue.Empty:
+                    if time.time() - last_output >= 5:
+                        prefix = f"[{progress_label}] " if progress_label else ""
+                        elapsed = time.time() - start_time
+                        print(f"{prefix}working... {elapsed:.1f}s", flush=True)
+                        last_output = time.time()
                     continue
+
                 line = line.strip()
+                last_output = time.time()
                 if line.startswith("out_time_ms="):
                     try:
                         out_ms = int(line.split("=", 1)[1])
                         pct = int(min(100, (out_ms / 1_000_000) / progress_total_sec * 100))
                         if pct != last_pct:
                             prefix = f"[{progress_label}] " if progress_label else ""
-                            print(f"{prefix}progress: {pct}%")
+                            print(f"{prefix}progress: {pct}%", flush=True)
                             last_pct = pct
                     except Exception:
                         pass
         finally:
             stdout, stderr = proc.communicate()
             if proc.returncode != 0:
-                raise RuntimeError(f"ffmpeg failed: stdout={stdout!r}\nstderr={stderr!r}")
+                tail = "".join(err_tail)
+                raise RuntimeError(f"ffmpeg failed: stdout={stdout!r}\nstderr_tail={tail!r}")
         return
 
     proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -984,18 +1162,21 @@ def _ffprobe_duration(path: Path) -> float | None:
         return None
 
 
+
+
 def _ffmpeg_filter_cover(W: int, H: int) -> str:
-    return f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}"
+    return f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=fast_bilinear,crop={W}:{H}"
 
 
 def _ffmpeg_filter_contain(W: int, H: int) -> str:
-    return f"scale={W}:{H}:force_original_aspect_ratio=decrease"
+    return f"scale={W}:{H}:force_original_aspect_ratio=decrease:flags=fast_bilinear"
 
 
 def _ffmpeg_filter_compose_with_blur(W: int, H: int, blur: int, no_upscale: bool = False) -> str:
     bg = _ffmpeg_filter_cover(W, H)
     if blur > 0:
-        bg = f"{bg},boxblur={blur}:1"
+        # Downscale before blur for speed, then scale back up
+        bg = f"{bg},scale=iw*0.25:ih*0.25:flags=fast_bilinear,boxblur={blur}:1,scale={W}:{H}:flags=fast_bilinear"
     if no_upscale:
         fg = (
             f"scale=w='if(gt(iw\\,{W})\\,{W}\\,iw)':"
@@ -1044,6 +1225,7 @@ def _render_timeline_ffmpeg(
     transition: float = 0.3,
     fade_max_ratio: float = 1.0,
     bg_blur: float = 6.0,
+    bgm_volume: float = 60.0,
     preserve_videos: bool = False,
     resolution: tuple[int, int] | None = None,
 ) -> None:
@@ -1075,28 +1257,36 @@ def _render_timeline_ffmpeg(
 
     total_dur = 0.0
     codec = _select_video_encoder() or "libx264"
+    filter_scale = _get_filter_scale()
+    video_blur_enabled = os.environ.get("VIDEO_ENGINE_VIDEO_BLUR", "").strip() == "1"
+    proc_W = max(16, int(target_W * filter_scale))
+    proc_H = max(16, int(target_H * filter_scale))
+    if proc_W % 2 == 1:
+        proc_W -= 1
+    if proc_H % 2 == 1:
+        proc_H -= 1
     with tempfile.TemporaryDirectory(prefix="ve_ffmpeg_") as tmpdir:
         clip_paths: list[Path] = []
+        audio_paths: list[Path] = []
 
         for idx, p in enumerate(plans):
-            print(f"[ffmpeg] Rendering clip {idx + 1}/{len(plans)}: {Path(p.path).name}")
+            print(f"[ffmpeg] Rendering clip {idx + 1}/{len(plans)}: {Path(p.path).name}", flush=True)
             path = Path(p.path)
             if not path.exists() or not path.is_file():
                 raise FileNotFoundError(f"Clip not found: {path}")
+
+            # Stage OneDrive videos to local temp cache to avoid network/placeholder stalls
+            staged_path = path
+            if getattr(p, "kind", None) == "video":
+                staged_path = _stage_video_path(path, tmpdir, idx)
 
             dur = float(p.duration)
             use_dur = dur
 
             src_w = src_h = None
             if getattr(p, "kind", None) == "video":
-                probe_dur = _ffprobe_duration(path)
-                if preserve_videos and probe_dur and probe_dur > 0:
-                    use_dur = float(probe_dur)
-                elif probe_dur and probe_dur > 0:
-                    use_dur = min(float(probe_dur), use_dur)
-                size = _ffprobe_size(path)
-                if size:
-                    src_w, src_h = size
+                # Skip per-clip ffprobe to avoid stalls on large/vfr MOV files
+                pass
             else:
                 try:
                     from PIL import Image
@@ -1109,18 +1299,22 @@ def _render_timeline_ffmpeg(
 
             is_source_portrait = bool(src_w and src_h and src_h > src_w)
             use_blur = int(bg_blur) if bg_blur is not None else 0
+            blur_eff = use_blur
 
-            # Use compose_with_blur only when background blur is explicitly enabled
+            kind = getattr(p, "kind", None)
+            use_video_blur = bool(kind == "video" and video_blur_enabled)
+
+            # Use compose_with_blur only for photos or when explicitly enabled for videos
             # Otherwise use cover filter for faster processing
-            if (getattr(p, "kind", None) == "photo" or target_H > target_W or is_source_portrait) and use_blur > 0:
+            if (kind == "photo" or use_video_blur or target_H > target_W or is_source_portrait) and blur_eff > 0 and (kind != "video" or use_video_blur):
                 no_upscale = False
-                if getattr(p, "kind", None) == "video":
+                if kind == "video":
                     no_upscale = True
                 elif is_source_portrait:
                     no_upscale = True
-                base_filter = _ffmpeg_filter_compose_with_blur(target_W, target_H, use_blur, no_upscale=no_upscale)
+                base_filter = _ffmpeg_filter_compose_with_blur(proc_W, proc_H, blur_eff, no_upscale=no_upscale)
             else:
-                base_filter = _ffmpeg_filter_cover(target_W, target_H)
+                base_filter = _ffmpeg_filter_cover(proc_W, proc_H)
 
             # Apply fades only at transitions (skip fade-in for first, fade-out for last)
             apply_fade_in = idx > 0
@@ -1133,19 +1327,14 @@ def _render_timeline_ffmpeg(
                 fade_in=apply_fade_in,
                 fade_out=apply_fade_out,
             )
+            if (proc_W, proc_H) != (target_W, target_H):
+                vf = f"{vf},scale={target_W}:{target_H}:flags=fast_bilinear"
 
             out_clip = Path(tmpdir) / f"clip_{idx:04d}.mp4"
             
-            # Build base command
-            base_cmd = [
-                "ffmpeg", "-y",
-                "-t", str(use_dur),
-                "-r", str(int(fps)),
-                "-filter_complex", f"{vf}[v]",
-                "-map", "[v]",
-                "-an",
-                "-pix_fmt", "yuv420p",
-            ]
+            # Build base command (video-only for speed)
+            base_cmd = _build_base_cmd(vf, use_dur, fps)
+            base_cmd.insert(base_cmd.index("-pix_fmt"), "-an")
             
             # Add encoder-specific arguments
             encoder_args = _get_ffmpeg_encoder_args(codec)
@@ -1155,31 +1344,42 @@ def _render_timeline_ffmpeg(
                 base_cmd.extend(["-profile:v", "main", "-level", "4.1"])
             
             base_cmd.extend(["-movflags", "+faststart", str(out_clip)])
-            
-            if getattr(p, "kind", None) == "photo":
+
+            # kind already resolved above
+            if kind == "photo":
                 cmd = [
                     "ffmpeg", "-y",
                     "-loop", "1",
                     "-i", str(path),
                 ] + base_cmd[1:]
             else:
+                video_input_opts = _build_video_input_opts()
                 cmd = [
                     "ffmpeg", "-y",
-                    "-i", str(path),
+                    *video_input_opts,
+                    "-i", str(staged_path),
                 ] + base_cmd[1:]
-            
-            # Insert encoder args after -map [v]
-            insert_pos = cmd.index("-an")
+
+            # Insert encoder args before pixel format
+            insert_pos = cmd.index("-pix_fmt")
             for arg in reversed(encoder_args):
                 cmd.insert(insert_pos, arg)
 
             _run_ffmpeg(cmd, progress_total_sec=use_dur, progress_label=f"clip {idx + 1}/{len(plans)}")
             clip_paths.append(out_clip)
+            # Extract audio separately
+            out_audio = Path(tmpdir) / f"audio_{idx:04d}.wav"
+            if kind == "video":
+                audio_cmd = _build_audio_extract_cmd(staged_path, use_dur, out_audio)
+            else:
+                audio_cmd = _build_silence_audio_cmd(use_dur, out_audio)
+            _run_ffmpeg(audio_cmd, progress_total_sec=use_dur, progress_label=f"audio {idx + 1}/{len(plans)}")
+            audio_paths.append(out_audio)
 
         # Concatenate clips
-        print("[ffmpeg] Concatenating clips...")
+        print("[ffmpeg] Concatenating clips...", flush=True)
         list_path = Path(tmpdir) / "concat.txt"
-        list_path.write_text("\n".join([f"file '{p.as_posix()}'" for p in clip_paths]), encoding="utf-8")
+        _write_concat_list(clip_paths, list_path)
 
         concat_out = Path(tmpdir) / "concat.mp4"
         concat_cmd = [
@@ -1194,38 +1394,61 @@ def _render_timeline_ffmpeg(
         ]
         _run_ffmpeg(concat_cmd, progress_total_sec=total_dur, progress_label="concat")
 
+        # Concatenate audio clips
+        audio_list_path = Path(tmpdir) / "audio_concat.txt"
+        _write_concat_list(audio_paths, audio_list_path)
+        audio_concat = Path(tmpdir) / "audio_concat.wav"
+        audio_concat_cmd = _build_audio_concat_cmd(audio_list_path, audio_concat)
+        _run_ffmpeg(audio_concat_cmd, progress_total_sec=total_dur, progress_label="audio-concat")
+
         # Add BGM if requested
         if bgm_path is not None and bgm_path.exists() and bgm_path.is_file():
-            print("[ffmpeg] Mixing BGM...")
+            print("[ffmpeg] Mixing BGM...", flush=True)
             max_fade = float(total_dur) / 2.0 if total_dur > 0 else 0.0
             fi = min(float(fade_in), max_fade)
             fo = min(float(fade_out), max_fade)
-            af = []
+            
+            # Build audio filter with volume control
+            # bgm_volume is a percentage (0-200), where 100 = equal to video audio
+            bgm_vol_factor = max(0.0, float(bgm_volume) / 100.0)
+            
+            af_parts = []
+            # Video audio channel at full volume
+            af_parts.append("[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume=1.0[video_audio]")
+            # BGM audio with configured volume
+            af_parts.append(f"[2:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume={bgm_vol_factor}[bgm_audio]")
+            # Mix both audio tracks without normalization attenuation
+            af_parts.append("[video_audio][bgm_audio]amix=inputs=2:duration=longest:normalize=0[mixed_audio]")
+            
+            # Apply fades to mixed audio
             if fi > 0:
-                af.append(f"afade=t=in:st=0:d={fi}")
+                af_parts.append(f"[mixed_audio]afade=t=in:st=0:d={fi}[faded_in]")
+                fade_output = "faded_in"
+            else:
+                fade_output = "mixed_audio"
+            
             if fo > 0:
                 out_start = max(0.0, float(total_dur) - fo)
-                af.append(f"afade=t=out:st={out_start}:d={fo}")
-            afilter = ",".join(af) if af else "anull"
+                af_parts.append(f"[{fade_output}]afade=t=out:st={out_start}:d={fo}[faded_out]")
+                fade_output = "faded_out"
 
-            audio_cmd = [
-                "ffmpeg", "-y",
-                "-i", str(concat_out),
-                "-stream_loop", "-1",
-                "-i", str(bgm_path),
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-q:a", "8",
-                "-map", "0:v:0",
-                "-map", "1:a:0",
-                "-t", str(total_dur),
-                "-af", afilter,
-                "-movflags", "+faststart+empty_moov",
-                "-fflags", "+genpts",
-                str(output_path),
-            ]
+            # Prevent clipping
+            af_parts.append(f"[{fade_output}]alimiter=limit=0.95[out_audio]")
+
+            afilter = ";".join(af_parts)
+            final_audio = "[out_audio]"
+
+            audio_cmd = _build_bgm_mix_cmd(
+                concat_out,
+                audio_concat,
+                bgm_path,
+                total_dur,
+                afilter,
+                output_path,
+            )
             _run_ffmpeg(audio_cmd, progress_total_sec=total_dur, progress_label="bgm")
         else:
-            print("[ffmpeg] Writing output...")
-            shutil.move(str(concat_out), str(output_path))
+            print("[ffmpeg] Writing output...", flush=True)
+            mux_cmd = _build_mux_cmd(concat_out, audio_concat, total_dur, output_path)
+            _run_ffmpeg(mux_cmd, progress_total_sec=total_dur, progress_label="mux")
 

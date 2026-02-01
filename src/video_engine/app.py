@@ -41,6 +41,7 @@ def run_e2e(
     fade_max_ratio: float = 1.0,
     preserve_videos: bool = False,
     bg_blur: float = 6.0,
+    bgm_volume: float = 60.0,
     resolution: tuple[int, int] | None = None,
     scan_all_flag: bool = False,
 ) -> int:
@@ -81,6 +82,7 @@ def run_e2e(
         fade_max_ratio=fade_max_ratio,
         preserve_videos=preserve_videos,
         bg_blur=bg_blur,
+        bgm_volume=bgm_volume,
         resolution=resolution,
     )
 
