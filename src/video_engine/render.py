@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 from functools import lru_cache
+import tempfile
 
 # Pillow compatibility for Image.ANTIALIAS removal in recent versions.
 # Some MoviePy functions reference Image.ANTIALIAS; ensure it's defined.
@@ -274,6 +275,25 @@ def render_timeline(
     """
     if not plans:
         raise ValueError("plans must be non-empty")
+
+    # Prefer ffmpeg filter path for performance
+    if _ffmpeg_available():
+        try:
+            return _render_timeline_ffmpeg(
+                plans,
+                output_path,
+                fps=fps,
+                bgm_path=bgm_path,
+                fade_in=fade_in,
+                fade_out=fade_out,
+                transition=transition,
+                bg_blur=bg_blur,
+                preserve_videos=preserve_videos,
+                resolution=resolution,
+            )
+        except Exception:
+            # Fall back to MoviePy path if ffmpeg rendering fails
+            pass
 
     # Prefer the convenient editor import
     try:
@@ -817,4 +837,255 @@ def render_timeline(
             _close_clip_safe(final)
         except Exception:
             pass
+
+
+def _ffmpeg_available() -> bool:
+    return shutil.which("ffmpeg") is not None
+
+
+def _run_ffmpeg(cmd: list[str]) -> None:
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: stdout={proc.stdout!r}\nstderr={proc.stderr!r}")
+
+
+def _ffprobe_size(path: Path) -> tuple[int, int] | None:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    proc = subprocess.run(
+        [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        return None
+    try:
+        w_s, h_s = proc.stdout.strip().split("x")
+        return int(w_s), int(h_s)
+    except Exception:
+        return None
+
+
+def _ffprobe_duration(path: Path) -> float | None:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    proc = subprocess.run(
+        [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        return None
+    try:
+        return float(proc.stdout.strip())
+    except Exception:
+        return None
+
+
+def _ffmpeg_filter_cover(W: int, H: int) -> str:
+    return f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}"
+
+
+def _ffmpeg_filter_contain(W: int, H: int) -> str:
+    return f"scale={W}:{H}:force_original_aspect_ratio=decrease"
+
+
+def _ffmpeg_filter_compose_with_blur(W: int, H: int, blur: int, no_upscale: bool = False) -> str:
+    bg = _ffmpeg_filter_cover(W, H)
+    if blur > 0:
+        bg = f"{bg},boxblur={blur}:1"
+    if no_upscale:
+        fg = (
+            f"scale=w='if(gt(iw\\,{W})\\,{W}\\,iw)':"
+            f"h='if(gt(ih\\,{H})\\,{H}\\,ih)':"
+            "force_original_aspect_ratio=decrease"
+        )
+    else:
+        fg = _ffmpeg_filter_contain(W, H)
+    return (
+        f"[0:v]split=2[fgsrc][bgsrc];"
+        f"[bgsrc]{bg}[bg];"
+        f"[fgsrc]{fg}[fg];"
+        f"[bg][fg]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2"
+    )
+
+
+def _ffmpeg_filter_with_fades(base: str, duration: float, transition: float) -> str:
+    # NOTE: ffmpeg path prioritizes performance; per-clip fades are skipped.
+    return base
+
+
+def _render_timeline_ffmpeg(
+    plans: list,
+    output_path: Path,
+    fps: int = 30,
+    bgm_path: Optional[Path] = None,
+    fade_in: float = 0.5,
+    fade_out: float = 0.5,
+    transition: float = 0.3,
+    bg_blur: float = 6.0,
+    preserve_videos: bool = False,
+    resolution: tuple[int, int] | None = None,
+) -> None:
+    # Determine target resolution (mirror MoviePy path behavior)
+    default_W, default_H = 1280, 720
+    if resolution is not None:
+        try:
+            target_W, target_H = int(resolution[0]), int(resolution[1])
+        except Exception:
+            target_W, target_H = default_W, default_H
+    else:
+        if preserve_videos:
+            max_w, max_h = 0, 0
+            for p in plans:
+                if getattr(p, "kind", None) == "video":
+                    size = _ffprobe_size(Path(p.path))
+                    if size:
+                        vw, vh = size
+                        max_w = max(max_w, int(vw or 0))
+                        max_h = max(max_h, int(vh or 0))
+            if max_w > 0 and max_h > 0:
+                target_W, target_H = max_w, max_h
+            else:
+                target_W, target_H = default_W, default_H
+        else:
+            target_W, target_H = default_W, default_H
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    total_dur = 0.0
+    codec = _select_video_encoder() or "libx264"
+    with tempfile.TemporaryDirectory(prefix="ve_ffmpeg_") as tmpdir:
+        clip_paths: list[Path] = []
+
+        for idx, p in enumerate(plans):
+            print(f"[ffmpeg] Rendering clip {idx + 1}/{len(plans)}: {Path(p.path).name}")
+            path = Path(p.path)
+            if not path.exists() or not path.is_file():
+                raise FileNotFoundError(f"Clip not found: {path}")
+
+            dur = float(p.duration)
+            use_dur = dur
+
+            src_w = src_h = None
+            if getattr(p, "kind", None) == "video":
+                probe_dur = _ffprobe_duration(path)
+                if preserve_videos and probe_dur and probe_dur > 0:
+                    use_dur = float(probe_dur)
+                elif probe_dur and probe_dur > 0:
+                    use_dur = min(float(probe_dur), use_dur)
+                size = _ffprobe_size(path)
+                if size:
+                    src_w, src_h = size
+            else:
+                try:
+                    from PIL import Image
+                    with Image.open(path) as img:
+                        src_w, src_h = img.size
+                except Exception:
+                    src_w, src_h = None, None
+
+            total_dur += float(use_dur)
+
+            is_source_portrait = bool(src_w and src_h and src_h > src_w)
+            use_blur = int(bg_blur) if bg_blur is not None else 0
+
+            if getattr(p, "kind", None) == "photo" or target_H > target_W or is_source_portrait:
+                no_upscale = False
+                if getattr(p, "kind", None) == "video":
+                    no_upscale = True
+                elif is_source_portrait:
+                    no_upscale = True
+                base_filter = _ffmpeg_filter_compose_with_blur(target_W, target_H, use_blur, no_upscale=no_upscale)
+            else:
+                base_filter = _ffmpeg_filter_cover(target_W, target_H)
+
+            vf = _ffmpeg_filter_with_fades(base_filter, use_dur, transition)
+
+            out_clip = Path(tmpdir) / f"clip_{idx:04d}.mp4"
+            if getattr(p, "kind", None) == "photo":
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-loop", "1",
+                    "-i", str(path),
+                    "-t", str(use_dur),
+                    "-r", str(int(fps)),
+                    "-filter_complex", f"{vf}[v]",
+                    "-map", "[v]",
+                    "-an",
+                    "-c:v", codec,
+                    "-pix_fmt", "yuv420p",
+                    "-profile:v", "main",
+                    "-level", "4.1",
+                    "-movflags", "+faststart",
+                    str(out_clip),
+                ]
+            else:
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", str(path),
+                    "-t", str(use_dur),
+                    "-r", str(int(fps)),
+                    "-filter_complex", f"{vf}[v]",
+                    "-map", "[v]",
+                    "-an",
+                    "-c:v", codec,
+                    "-pix_fmt", "yuv420p",
+                    "-profile:v", "main",
+                    "-level", "4.1",
+                    "-movflags", "+faststart",
+                    str(out_clip),
+                ]
+
+            _run_ffmpeg(cmd)
+            clip_paths.append(out_clip)
+
+        # Concatenate clips
+        print("[ffmpeg] Concatenating clips...")
+        list_path = Path(tmpdir) / "concat.txt"
+        list_path.write_text("\n".join([f"file '{p.as_posix()}'" for p in clip_paths]), encoding="utf-8")
+
+        concat_out = Path(tmpdir) / "concat.mp4"
+        concat_cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(list_path),
+            "-c", "copy",
+            str(concat_out),
+        ]
+        _run_ffmpeg(concat_cmd)
+
+        # Add BGM if requested
+        if bgm_path is not None and bgm_path.exists() and bgm_path.is_file():
+            print("[ffmpeg] Mixing BGM...")
+            max_fade = float(total_dur) / 2.0 if total_dur > 0 else 0.0
+            fi = min(float(fade_in), max_fade)
+            fo = min(float(fade_out), max_fade)
+            af = []
+            if fi > 0:
+                af.append(f"afade=t=in:st=0:d={fi}")
+            if fo > 0:
+                out_start = max(0.0, float(total_dur) - fo)
+                af.append(f"afade=t=out:st={out_start}:d={fo}")
+            afilter = ",".join(af) if af else "anull"
+
+            audio_cmd = [
+                "ffmpeg", "-y",
+                "-i", str(concat_out),
+                "-stream_loop", "-1",
+                "-i", str(bgm_path),
+                "-t", str(total_dur),
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-shortest",
+                "-af", afilter,
+                "-movflags", "+faststart",
+                str(output_path),
+            ]
+            _run_ffmpeg(audio_cmd)
+        else:
+            print("[ffmpeg] Writing output...")
+            shutil.move(str(concat_out), str(output_path))
 

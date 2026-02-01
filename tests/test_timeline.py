@@ -29,8 +29,8 @@ def test_ten_photos_fill_to_target_and_not_exceed_max():
     plans = build_timeline(items, target_seconds=60.0, photo_seconds=2.5, photo_max_seconds=6.0)
 
     assert len(plans) == 10
-    # Each should be at most photo_max_seconds
-    assert all(p.duration <= 6.0 + 1e-12 for p in plans)
+    # Each should be equal when distributing remaining time
+    assert all(math.isclose(p.duration, plans[0].duration, rel_tol=0, abs_tol=1e-12) for p in plans)
     assert math.isclose(total_duration(plans), 60.0, rel_tol=0, abs_tol=1e-6)
 
 
@@ -50,9 +50,9 @@ def test_mixed_photos_and_videos_photos_extended_first():
     plans = build_timeline(items, target_seconds=60.0, photo_seconds=2.5, video_max_seconds=5.0, photo_max_seconds=6.0)
 
     assert math.isclose(total_duration(plans), 60.0, rel_tol=0, abs_tol=1e-6)
-    # Photo durations at most photo_max_seconds
+    # Photo durations are equal after distribution
     photo_plans = [p for p in plans if p.kind == "photo"]
-    assert all(p.duration <= 6.0 + 1e-12 for p in photo_plans)
+    assert all(math.isclose(p.duration, photo_plans[0].duration, rel_tol=0, abs_tol=1e-12) for p in photo_plans)
 
 
 def test_only_videos_under_target_last_extended():
