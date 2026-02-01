@@ -92,8 +92,8 @@ def test_portrait_bg_blur_cli(tmp_path: Path) -> None:
 
     # --bg-blur=0
     cmd0 = [
-        "python", "-m", "video_engine",
-        "--week", "2026-W04",
+            "python", "-m", "video_engine",
+            "--name", "2026-W04",
         "--input", str(tmp_path),
         "--output", str(tmp_path),
         "--duration", "0.5",
@@ -108,8 +108,8 @@ def test_portrait_bg_blur_cli(tmp_path: Path) -> None:
 
     # --bg-blur=6
     cmd6 = [
-        "python", "-m", "video_engine",
-        "--week", "2026-W04",
+            "python", "-m", "video_engine",
+            "--name", "2026-W04",
         "--input", str(tmp_path),
         "--output", str(tmp_path),
         "--duration", "0.5",

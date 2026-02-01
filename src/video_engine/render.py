@@ -9,6 +9,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
+import os
+import shutil
+import subprocess
+import sys
+from functools import lru_cache
 
 # Pillow compatibility for Image.ANTIALIAS removal in recent versions.
 # Some MoviePy functions reference Image.ANTIALIAS; ensure it's defined.
@@ -147,14 +152,15 @@ def render_single_photo(
                 clip.audio = audio_clip
 
         # Write file: include audio codec only if audio is present
-        write_kwargs = dict(fps=int(fps), codec="libx264")
+        # Prefer hardware encoder when available, with fallback to libx264.
+        codec = _select_video_encoder()
+        write_kwargs = dict(fps=int(fps), codec=codec or "libx264", ffmpeg_params=_compat_ffmpeg_params())
         if audio_clip is not None:
             write_kwargs.update(dict(audio=True, audio_codec="aac"))
         else:
             write_kwargs.update(dict(audio=False))
 
-        # Some MoviePy versions have different write_videofile signatures; call with minimal kwargs.
-        clip.write_videofile(str(output_path), **write_kwargs)
+        _write_videofile_with_fallback(clip, output_path, write_kwargs)
     except Exception as exc:  # pragma: no cover - depends on runtime ffmpeg
         raise RuntimeError(f"Failed to render video: {exc}") from exc
 
@@ -164,6 +170,83 @@ def _close_clip_safe(c):
         c.close()
     except Exception:
         pass
+
+
+def _write_videofile_with_fallback(clip, output_path: Path, write_kwargs: dict) -> None:
+    """Write a video file, falling back to libx264 if hardware encoder fails silently."""
+    # Some MoviePy versions have different write_videofile signatures; call with minimal kwargs.
+    clip.write_videofile(str(output_path), **write_kwargs)
+
+    try:
+        if output_path.exists() and output_path.stat().st_size > 0:
+            return
+    except Exception:
+        pass
+
+    # If file is missing/empty and codec wasn't libx264, retry with libx264
+    codec = write_kwargs.get("codec")
+    if codec and codec != "libx264":
+        fallback_kwargs = dict(write_kwargs)
+        fallback_kwargs["codec"] = "libx264"
+        clip.write_videofile(str(output_path), **fallback_kwargs)
+
+
+def _compat_ffmpeg_params() -> list[str]:
+    """Return ffmpeg params for broad playback compatibility."""
+    return [
+        "-pix_fmt", "yuv420p",
+        "-profile:v", "main",
+        "-level", "4.1",
+        "-movflags", "+faststart",
+    ]
+
+
+@lru_cache(maxsize=1)
+def _select_video_encoder() -> Optional[str]:
+    """Pick a hardware video encoder if available, else None.
+
+    Order prefers common hardware encoders by platform. Can be overridden by
+    env var VIDEO_ENGINE_FFMPEG_CODEC (set empty to disable).
+    Set VIDEO_ENGINE_ENABLE_HW=1 to auto-select a hardware encoder.
+    """
+    override = os.environ.get("VIDEO_ENGINE_FFMPEG_CODEC")
+    if override is not None:
+        return override.strip() or None
+
+    enable_hw = os.environ.get("VIDEO_ENGINE_ENABLE_HW")
+    if not enable_hw or enable_hw.strip() != "1":
+        return None
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+
+    try:
+        result = subprocess.run(
+            [ffmpeg, "-hide_banner", "-encoders"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        encoders_text = result.stdout or ""
+    except Exception:
+        return None
+
+    encoders = encoders_text.splitlines()
+
+    # Preferred encoder order by platform
+    if os.name == "nt":
+        candidates = ["h264_nvenc", "h264_qsv", "h264_amf"]
+    elif sys.platform == "darwin":
+        candidates = ["h264_videotoolbox", "h264_nvenc", "h264_qsv", "h264_amf"]
+    else:
+        candidates = ["h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox"]
+
+    for cand in candidates:
+        for line in encoders:
+            if cand in line:
+                return cand
+    return None
 
 
 def render_timeline(
@@ -718,13 +801,14 @@ def render_timeline(
         # Ensure output dir exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        write_kwargs = dict(fps=int(fps), codec="libx264")
+        codec = _select_video_encoder()
+        write_kwargs = dict(fps=int(fps), codec=codec or "libx264", ffmpeg_params=_compat_ffmpeg_params())
         if audio_clip is not None:
             write_kwargs.update(dict(audio=True, audio_codec="aac"))
         else:
             write_kwargs.update(dict(audio=False))
 
-        final.write_videofile(str(output_path), **write_kwargs)
+        _write_videofile_with_fallback(final, output_path, write_kwargs)
     finally:
         # Close clips to avoid file locks
         for c in clips:

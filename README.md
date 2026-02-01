@@ -30,6 +30,10 @@ Designed for fully automated, rule-based video composition using MoviePy.
 - ffmpeg（PATHに設定されていること）
 - OS: Windows / macOS / Linux
 
+写真のEXIF読み取りやHEIC対応を行う場合は、以下を追加で導入してください（任意）:
+- Pillow
+- pillow-heif（HEIC/HEIF対応）
+
 ---
 
 ## インストール
@@ -44,10 +48,10 @@ pip install -r requirements.txt
 
 ## 使い方（CLI）
 
-`python -m video_engine` のCLIでISO週を指定してプレビュー動画を生成します。主なオプションは以下の通りです。
+`python -m video_engine` のCLIで入力フォルダ内の写真・動画をスキャンしてプレビュー動画を生成します。主なオプションは以下の通りです。
 
-- `--week <ISO>`: ISO週（例: 2026-W04）。`--scan-all`が無い場合は必須。
-- `--scan-all`: `--input`配下を再帰的に全走査。`--week`は省略可。
+- `--name <text>`: 出力ファイル名に使う名前（例: 2026-W04）。`--week`は互換エイリアス。
+- `--scan-all`: `--input`配下のサブフォルダも含めて再帰的に走査します。未指定時はフォルダ直下のみを走査します。
 - `--input <path>`: 入力ディレクトリ（既定: ./input）。
 - `--bgm <path>`: BGMファイルまたはディレクトリ（既定: ./bgm）。
 - `--output <path>`: 出力ディレクトリ（既定: ./output）。
@@ -58,6 +62,10 @@ pip install -r requirements.txt
 - `--resolution <WIDTHxHEIGHT>`: 出力解像度（例: 1920x1080、1080x1920）。目安: 320x240～8192x4320。未指定時は既定を使用。
 - `--preset <name>`: プリセット（youtube / mobile / preview）。プリセット適用後に明示フラグが上書き。
 - `--dry-run`: 実行せず有効値とスキャン結果を表示（解像度／duration／transition／bg_blur など）。
+
+GPU搭載環境では、利用可能なハードウェアエンコーダ（NVENC / QSV / AMF / VideoToolbox）があれば自動で使用します。
+ただし、合成・ぼかし・リサイズ等の処理はMoviePy側のCPU処理が中心です。
+強制的にエンコーダを指定したい場合は環境変数 `VIDEO_ENGINE_FFMPEG_CODEC` を設定してください（空文字で無効化）。
 
 例:
 

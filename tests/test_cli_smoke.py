@@ -43,6 +43,6 @@ def test_help_shows_usage_or_description() -> None:
 
 def test_no_args_requires_week() -> None:
     proc = _run_module([])
-    # CLI now requires --week; verify it fails with a useful message.
-    assert proc.returncode != 0, f"Expected non-zero exit when --week missing. stdout={proc.stdout!r} stderr={proc.stderr!r}"
-    assert "argument --week is required" in (proc.stderr or ""), f"stderr did not mention missing --week. stderr={proc.stderr!r}"
+    # CLI now requires --name on empty invocation; verify it fails with a useful message.
+    assert proc.returncode != 0, f"Expected non-zero exit when --name missing. stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "argument --name is required" in (proc.stderr or ""), f"stderr did not mention missing --name. stderr={proc.stderr!r}"

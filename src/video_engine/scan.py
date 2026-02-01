@@ -17,12 +17,22 @@ from .utils import parse_exif_datetime
 
 logger = logging.getLogger(__name__)
 
-PHOTO_EXTS = {".jpg", ".jpeg", ".png"}
+PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".heic"}
 VIDEO_EXTS = {".mp4", ".mov"}
 
 # Try to import Pillow (PIL) for EXIF reading; if unavailable, continue
 try:
     from PIL import Image
+    # Optional: enable HEIC/HEIF support when pillow-heif is installed
+    try:
+        import pillow_heif  # type: ignore
+
+        try:
+            pillow_heif.register_heif_opener()
+        except Exception:
+            pass
+    except Exception:
+        pass
 except Exception:  # pragma: no cover - import failure path
     Image = None
 
@@ -148,6 +158,40 @@ def scan_all(input_dir: Path) -> List[MediaItem]:
             ts = _read_photo_exif_timestamp(p)
             if ts is None:
                 logger.debug("No EXIF timestamp for %s; fallback to mtime", p)
+        if ts is None:
+            ts = _file_mtime_timestamp(p)
+
+        items.append(MediaItem(path=p, kind=kind, timestamp=ts))
+
+    items.sort(key=lambda it: it.timestamp)
+    return items
+
+
+def scan_flat(input_dir: Path) -> List[MediaItem]:
+    """Scan only the top-level of `input_dir` (non-recursive).
+
+    Collect supported photo/video files directly under `input_dir` and
+    extract timestamps similarly to `scan_all`.
+    """
+    items: List[MediaItem] = []
+    if not input_dir.exists():
+        return items
+
+    for p in input_dir.iterdir():
+        if not p.is_file():
+            continue
+        ext = p.suffix.lower()
+        kind: Literal["photo", "video"] | None = None
+        if ext in PHOTO_EXTS:
+            kind = "photo"
+        elif ext in VIDEO_EXTS:
+            kind = "video"
+        else:
+            continue
+
+        ts: datetime | None = None
+        if kind == "photo":
+            ts = _read_photo_exif_timestamp(p)
         if ts is None:
             ts = _file_mtime_timestamp(p)
 

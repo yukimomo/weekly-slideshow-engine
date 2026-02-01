@@ -9,8 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, List
 
-from .utils import iso_week_to_range
-from .scan import scan_week, scan_all, MediaItem, PHOTO_EXTS, VIDEO_EXTS
+from .scan import scan_flat, scan_all, MediaItem, PHOTO_EXTS, VIDEO_EXTS
 from .timeline import build_timeline
 from .render import render_single_photo
 
@@ -32,7 +31,7 @@ def _choose_bgm(bgm_path: Path | None) -> Optional[Path]:
 
 
 def run_e2e(
-    week: str,
+    week: str | None,
     input_dir: Path,
     bgm: Path | None,
     output_dir: Path,
@@ -48,39 +47,22 @@ def run_e2e(
 
     Returns an exit code (0 success, 2 no media found).
     """
-    start_date, end_date = iso_week_to_range(week)
-
-    items = scan_all(input_dir) if scan_all_flag else scan_week(input_dir, start_date, end_date)
+    # Simplified: scan current folder (non-recursive) by default; use recursive when requested.
+    items = scan_all(input_dir) if scan_all_flag else scan_flat(input_dir)
     if not items:
-        # フォールバック: input_dir直下に平置きされたメディアを走査（テスト用途）
-        fallback_items: List[MediaItem] = []
-        if input_dir.exists():
-            for p in input_dir.iterdir():
-                if not p.is_file():
-                    continue
-                ext = p.suffix.lower()
-                kind = None
-                if ext in PHOTO_EXTS:
-                    kind = "photo"
-                elif ext in VIDEO_EXTS:
-                    kind = "video"
-                if kind is None:
-                    continue
-                ts = p.stat().st_mtime
-                from datetime import datetime
-                fallback_items.append(MediaItem(path=p, kind=kind, timestamp=datetime.fromtimestamp(ts)))
-
-        if not fallback_items:
-            print("no media found")
-            return 2
-        items = sorted(fallback_items, key=lambda it: it.timestamp)
+        print("no media found")
+        return 2
 
     plans = build_timeline(items, target_seconds=duration)
 
     # Ensure output dir exists
     output_dir.mkdir(parents=True, exist_ok=True)
-    week_s = _sanitize_week(week)
-    out_path = output_dir / f"{week_s}_preview.mp4"
+    # Output filename: prefer provided week string; else use folder name
+    if week:
+        week_s = _sanitize_week(week)
+        out_path = output_dir / f"{week_s}_preview.mp4"
+    else:
+        out_path = output_dir / f"{input_dir.name}_preview.mp4"
 
     bgm_choice = _choose_bgm(bgm)
 

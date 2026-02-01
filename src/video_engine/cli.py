@@ -45,9 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--name",
         "--week",
+        dest="name",
         type=str,
-        help="ISO week string, e.g. 2026-W04 (required unless --scan-all)",
+        help="Optional name used for output filename (e.g. 2026-W04)",
     )
 
     parser.add_argument(
@@ -126,6 +128,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Apply preset defaults, then let explicit CLI flags override.
     from .presets import merge_preset, detect_provided_options
     argv_tokens = argv if argv is not None else sys.argv[1:]
+    # Backward-compat: when no arguments at all, require --name to guide usage
+    if not argv_tokens:
+        parser.error("argument --name is required")
     provided = detect_provided_options(argv_tokens)
     base = {
         "resolution": args.resolution,
@@ -140,27 +145,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     args.transition = float(effective.get("transition", args.transition))
     args.bg_blur = float(effective.get("bg_blur", args.bg_blur))
 
-    # Require week unless --scan-all is set
-    if not args.week and not getattr(args, "scan_all", False):
-        parser.error("argument --week is required unless --scan-all is provided")
+    # Week is optional; scanning behavior controlled by --scan-all
 
-    # Compute week range if provided
+    # Prepare app entry
     from .app import run_e2e
-    if args.week:
-        from .utils import iso_week_to_range
-        start, end = iso_week_to_range(args.week)
-    else:
-        start, end = None, None
 
     if args.dry_run:
         # Dry run: report what would happen
-        from .scan import scan_week, scan_all
+        from .scan import scan_flat, scan_all
         from .timeline import build_timeline
-
-        if args.scan_all:
-            items = scan_all(args.input)
-        else:
-            items = scan_week(args.input, start, end)
+        items = scan_all(args.input) if args.scan_all else scan_flat(args.input)
         plans = build_timeline(items, target_seconds=float(args.duration))
         # Choose bgm summary
         bgm_choice = None
@@ -171,10 +165,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 files = sorted([p for p in args.bgm.iterdir() if p.is_file()])
                 bgm_choice = files[0] if files else None
 
-        if args.scan_all:
-            print(f"Scan mode: all under {args.input}")
-        else:
-            print(f"Week: {args.week} -> {start.isoformat()}..{end.isoformat()}")
+        print("Scan mode:", "recursive" if args.scan_all else "flat")
+        print(f"Input dir: {args.input} - found {len(items)} media items")
         print(f"Input dir: {args.input} - found {len(items)} media items")
         print(f"Timeline entries: {len(plans)}")
         print(f"Chosen BGM: {bgm_choice}")
@@ -190,7 +182,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Non-dry run: run end-to-end
     rc = run_e2e(
-        args.week,
+        args.name,
         args.input,
         args.bgm,
         args.output,
