@@ -258,6 +258,7 @@ def render_timeline(
     fade_in: float = 0.5,
     fade_out: float = 0.5,
     transition: float = 0.3,
+    fade_max_ratio: float = 1.0,
     bg_blur: float = 6.0,
     preserve_videos: bool = False,
     resolution: tuple[int, int] | None = None,
@@ -287,6 +288,7 @@ def render_timeline(
                 fade_in=fade_in,
                 fade_out=fade_out,
                 transition=transition,
+                fade_max_ratio=fade_max_ratio,
                 bg_blur=bg_blur,
                 preserve_videos=preserve_videos,
                 resolution=resolution,
@@ -843,7 +845,35 @@ def _ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
-def _run_ffmpeg(cmd: list[str]) -> None:
+def _run_ffmpeg(cmd: list[str], progress_total_sec: float | None = None, progress_label: str | None = None) -> None:
+    if progress_total_sec and progress_total_sec > 0:
+        progress_cmd = cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
+        proc = subprocess.Popen(progress_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        last_pct = -1
+        try:
+            while True:
+                line = proc.stdout.readline() if proc.stdout else ""
+                if not line:
+                    if proc.poll() is not None:
+                        break
+                    continue
+                line = line.strip()
+                if line.startswith("out_time_ms="):
+                    try:
+                        out_ms = int(line.split("=", 1)[1])
+                        pct = int(min(100, (out_ms / 1_000_000) / progress_total_sec * 100))
+                        if pct != last_pct:
+                            prefix = f"[{progress_label}] " if progress_label else ""
+                            print(f"{prefix}progress: {pct}%")
+                            last_pct = pct
+                    except Exception:
+                        pass
+        finally:
+            stdout, stderr = proc.communicate()
+            if proc.returncode != 0:
+                raise RuntimeError(f"ffmpeg failed: stdout={stdout!r}\nstderr={stderr!r}")
+        return
+
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg failed: stdout={proc.stdout!r}\nstderr={proc.stderr!r}")
@@ -912,8 +942,25 @@ def _ffmpeg_filter_compose_with_blur(W: int, H: int, blur: int, no_upscale: bool
     )
 
 
-def _ffmpeg_filter_with_fades(base: str, duration: float, transition: float) -> str:
-    # NOTE: ffmpeg path prioritizes performance; per-clip fades are skipped.
+def _ffmpeg_filter_with_fades(
+    base: str,
+    duration: float,
+    transition: float,
+    fade_max_ratio: float = 1.0,
+    fade_in: bool = True,
+    fade_out: bool = True,
+) -> str:
+    if transition and transition > 0 and duration > 0 and (fade_in or fade_out):
+        cap = float(duration) * max(0.0, float(fade_max_ratio))
+        t = min(float(transition), cap) if cap > 0 else float(transition)
+        if t >= 0.01:
+            parts = [base]
+            if fade_in:
+                parts.append(f"fade=t=in:st=0:d={t}")
+            if fade_out:
+                out_start = max(0.0, float(duration) - t)
+                parts.append(f"fade=t=out:st={out_start}:d={t}")
+            return ",".join(parts)
     return base
 
 
@@ -925,6 +972,7 @@ def _render_timeline_ffmpeg(
     fade_in: float = 0.5,
     fade_out: float = 0.5,
     transition: float = 0.3,
+    fade_max_ratio: float = 1.0,
     bg_blur: float = 6.0,
     preserve_videos: bool = False,
     resolution: tuple[int, int] | None = None,
@@ -1002,7 +1050,17 @@ def _render_timeline_ffmpeg(
             else:
                 base_filter = _ffmpeg_filter_cover(target_W, target_H)
 
-            vf = _ffmpeg_filter_with_fades(base_filter, use_dur, transition)
+            # Apply fades only at transitions (skip fade-in for first, fade-out for last)
+            apply_fade_in = idx > 0
+            apply_fade_out = idx < (len(plans) - 1)
+            vf = _ffmpeg_filter_with_fades(
+                base_filter,
+                use_dur,
+                transition,
+                fade_max_ratio=fade_max_ratio,
+                fade_in=apply_fade_in,
+                fade_out=apply_fade_out,
+            )
 
             out_clip = Path(tmpdir) / f"clip_{idx:04d}.mp4"
             if getattr(p, "kind", None) == "photo":
@@ -1039,7 +1097,7 @@ def _render_timeline_ffmpeg(
                     str(out_clip),
                 ]
 
-            _run_ffmpeg(cmd)
+            _run_ffmpeg(cmd, progress_total_sec=use_dur, progress_label=f"clip {idx + 1}/{len(plans)}")
             clip_paths.append(out_clip)
 
         # Concatenate clips
@@ -1055,7 +1113,7 @@ def _render_timeline_ffmpeg(
             "-c", "copy",
             str(concat_out),
         ]
-        _run_ffmpeg(concat_cmd)
+        _run_ffmpeg(concat_cmd, progress_total_sec=total_dur, progress_label="concat")
 
         # Add BGM if requested
         if bgm_path is not None and bgm_path.exists() and bgm_path.is_file():
@@ -1084,7 +1142,7 @@ def _render_timeline_ffmpeg(
                 "-movflags", "+faststart",
                 str(output_path),
             ]
-            _run_ffmpeg(audio_cmd)
+            _run_ffmpeg(audio_cmd, progress_total_sec=total_dur, progress_label="bgm")
         else:
             print("[ffmpeg] Writing output...")
             shutil.move(str(concat_out), str(output_path))

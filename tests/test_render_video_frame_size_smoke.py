@@ -13,6 +13,8 @@ from video_engine.timeline import ClipPlan
 from video_engine.render import render_timeline
 
 pytestmark = [
+    pytest.mark.slow,
+    pytest.mark.render,
     pytest.mark.skipif(not conftest.moviepy_usable(), reason="moviepy not usable (partial/misinstalled)"),
     pytest.mark.skipif(not conftest.ffmpeg_available(), reason="ffmpeg not available in PATH"),
 ]

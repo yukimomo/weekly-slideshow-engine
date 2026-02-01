@@ -88,6 +88,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--fade-max-ratio",
+        type=float,
+        default=1.0,
+        help="Max fade duration as a ratio of clip length (default: 1.0 = no cap).",
+    )
+
+    parser.add_argument(
         "--preserve-videos",
         action="store_true",
         help="When set, include video files at their original duration instead of trimming to planned duration.",
@@ -189,6 +196,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         duration=float(args.duration),
         fps=30,
         transition=float(args.transition),
+        fade_max_ratio=float(args.fade_max_ratio),
         preserve_videos=bool(args.preserve_videos),
         bg_blur=float(args.bg_blur),
         resolution=args.resolution,

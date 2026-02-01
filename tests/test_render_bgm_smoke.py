@@ -17,6 +17,8 @@ import pytest
 from video_engine.render import render_single_photo
 
 
+@pytest.mark.slow
+@pytest.mark.render
 @pytest.mark.skipif(__import__("importlib").util.find_spec("moviepy") is None, reason="moviepy not installed")
 def test_render_with_bgm_smoke(tmp_path: Path) -> None:
     if shutil.which("ffmpeg") is None:

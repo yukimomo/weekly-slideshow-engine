@@ -38,6 +38,7 @@ def _run_module(args: list[str], env_extra: dict | None = None) -> subprocess.Co
     return subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
 
 
+@pytest.mark.slow
 def test_e2e_cli_creates_preview(tmp_path: Path) -> None:
 
     # Setup repo-like input

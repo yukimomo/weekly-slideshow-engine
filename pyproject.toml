@@ -18,3 +18,11 @@ where = ["src"]
 test = ["pytest"]
 image = ["Pillow", "pillow-heif"]
 render = ["moviepy"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "render: marks tests that require rendering (video encoding)",
+]
+testpaths = ["tests"]
+addopts = "-v --tb=short"

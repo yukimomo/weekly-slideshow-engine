@@ -57,6 +57,7 @@ pip install -r requirements.txt
 - `--output <path>`: 出力ディレクトリ（既定: ./output）。
 - `--duration <seconds>`: 目標秒数（既定: 8.0）。
 - `--transition <seconds>`: クリップのフェード長（既定: 0.3、0で無効）。
+- `--fade-max-ratio <float>`: フェード長の上限を「クリップ長に対する比率」で指定（既定: 1.0 = 上限なし）。
 - `--preserve-videos`: 動画の元の長さを優先（時間の扱い）。
 - `--bg-blur <float>`: 背景ぼかし半径（既定: 6.0、0で無効）。写真は常に「前景contain＋背景ぼかし」。動画は出力が縦長またはソースが縦動画なら写真同様、横長（出力・ソースとも横）は全面表示（カバー拡大＋中央クロップ）。
 - `--resolution <WIDTHxHEIGHT>`: 出力解像度（例: 1920x1080、1080x1920）。目安: 320x240～8192x4320。未指定時は既定を使用。
