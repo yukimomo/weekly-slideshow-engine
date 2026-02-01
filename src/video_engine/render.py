@@ -208,16 +208,21 @@ def _select_video_encoder() -> Optional[str]:
 
     Order prefers common hardware encoders by platform. Can be overridden by
     env var VIDEO_ENGINE_FFMPEG_CODEC (set empty to disable).
-    Set VIDEO_ENGINE_ENABLE_HW=1 to auto-select a hardware encoder.
+    
+    Behavior:
+    - VIDEO_ENGINE_FFMPEG_CODEC set (empty or value): Use that (or None)
+    - VIDEO_ENGINE_ENABLE_HW=0: Disable hardware, use libx264
+    - Otherwise: Auto-detect and use hardware encoder if available (default)
     """
     override = os.environ.get("VIDEO_ENGINE_FFMPEG_CODEC")
     if override is not None:
         return override.strip() or None
 
-    enable_hw = os.environ.get("VIDEO_ENGINE_ENABLE_HW")
-    if not enable_hw or enable_hw.strip() != "1":
-        return None
+    disable_hw = os.environ.get("VIDEO_ENGINE_ENABLE_HW")
+    if disable_hw == "0":
+        return None  # Explicitly disabled
 
+    # Default: Auto-detect hardware encoder
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         return None
@@ -248,6 +253,71 @@ def _select_video_encoder() -> Optional[str]:
             if cand in line:
                 return cand
     return None
+
+
+def _get_ffmpeg_encoding_preset() -> str:
+    """Get ffmpeg encoding preset from environment or return default.
+    
+    Supports:
+    - VIDEO_ENGINE_FFMPEG_PRESET: "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "placebo"
+    - Default: "fast" for CPU, automatic for hardware
+    """
+    preset = os.environ.get("VIDEO_ENGINE_FFMPEG_PRESET", "").strip()
+    if preset:
+        return preset
+    return "fast"
+
+
+def _get_ffmpeg_crf() -> int:
+    """Get ffmpeg quality setting (CRF) from environment or return default.
+    
+    Range: 0-51 (0=lossless, 18=visually lossless, 23=default, 51=worst quality)
+    Lower values = better quality but slower encoding
+    
+    Supports VIDEO_ENGINE_FFMPEG_CRF environment variable.
+    Default: 28 (good quality with reasonable speed)
+    """
+    crf = os.environ.get("VIDEO_ENGINE_FFMPEG_CRF", "").strip()
+    if crf and crf.isdigit():
+        val = int(crf)
+        if 0 <= val <= 51:
+            return val
+    return 28
+
+
+def _get_ffmpeg_encoder_args(codec: Optional[str]) -> list[str]:
+    """Get ffmpeg encoder-specific arguments based on codec type.
+    
+    Returns list of command-line arguments for the encoder.
+    """
+    if not codec:
+        codec = "libx264"
+    
+    args = ["-c:v", codec]
+    
+    if "nvenc" in codec:
+        # NVIDIA NVENC optimized settings
+        args.extend(["-preset", "fast"])  # fast, medium, slow
+        args.extend(["-rc", "vbr"])  # variable bitrate
+        args.extend(["-cq", "23"])  # quality 0-51 (lower=better, 23=default)
+    elif "qsv" in codec:
+        # Intel QuickSync Video settings
+        args.extend(["-preset", "fast"])  # ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, placebo
+    elif "amf" in codec:
+        # AMD VCE settings
+        args.extend(["-quality", "balanced"])  # balanced, speed, quality
+        args.extend(["-rc", "vbr"])
+    elif "videotoolbox" in codec:
+        # Apple VideoToolbox settings
+        args.extend(["-b:v", "2000k"])  # bitrate
+    elif codec == "libx264":
+        # CPU-based x264 with fast preset
+        preset = _get_ffmpeg_encoding_preset()
+        args.extend(["-preset", preset])
+        crf = _get_ffmpeg_crf()
+        args.extend(["-crf", str(crf)])
+    
+    return args
 
 
 def render_timeline(
@@ -1040,7 +1110,9 @@ def _render_timeline_ffmpeg(
             is_source_portrait = bool(src_w and src_h and src_h > src_w)
             use_blur = int(bg_blur) if bg_blur is not None else 0
 
-            if getattr(p, "kind", None) == "photo" or target_H > target_W or is_source_portrait:
+            # Use compose_with_blur only when background blur is explicitly enabled
+            # Otherwise use cover filter for faster processing
+            if (getattr(p, "kind", None) == "photo" or target_H > target_W or is_source_portrait) and use_blur > 0:
                 no_upscale = False
                 if getattr(p, "kind", None) == "video":
                     no_upscale = True
@@ -1063,39 +1135,43 @@ def _render_timeline_ffmpeg(
             )
 
             out_clip = Path(tmpdir) / f"clip_{idx:04d}.mp4"
+            
+            # Build base command
+            base_cmd = [
+                "ffmpeg", "-y",
+                "-t", str(use_dur),
+                "-r", str(int(fps)),
+                "-filter_complex", f"{vf}[v]",
+                "-map", "[v]",
+                "-an",
+                "-pix_fmt", "yuv420p",
+            ]
+            
+            # Add encoder-specific arguments
+            encoder_args = _get_ffmpeg_encoder_args(codec)
+            
+            # Add codec-independent options if not using hardware encoding
+            if codec and "nvenc" not in codec and "qsv" not in codec and "amf" not in codec and "videotoolbox" not in codec:
+                base_cmd.extend(["-profile:v", "main", "-level", "4.1"])
+            
+            base_cmd.extend(["-movflags", "+faststart", str(out_clip)])
+            
             if getattr(p, "kind", None) == "photo":
                 cmd = [
                     "ffmpeg", "-y",
                     "-loop", "1",
                     "-i", str(path),
-                    "-t", str(use_dur),
-                    "-r", str(int(fps)),
-                    "-filter_complex", f"{vf}[v]",
-                    "-map", "[v]",
-                    "-an",
-                    "-c:v", codec,
-                    "-pix_fmt", "yuv420p",
-                    "-profile:v", "main",
-                    "-level", "4.1",
-                    "-movflags", "+faststart",
-                    str(out_clip),
-                ]
+                ] + base_cmd[1:]
             else:
                 cmd = [
                     "ffmpeg", "-y",
                     "-i", str(path),
-                    "-t", str(use_dur),
-                    "-r", str(int(fps)),
-                    "-filter_complex", f"{vf}[v]",
-                    "-map", "[v]",
-                    "-an",
-                    "-c:v", codec,
-                    "-pix_fmt", "yuv420p",
-                    "-profile:v", "main",
-                    "-level", "4.1",
-                    "-movflags", "+faststart",
-                    str(out_clip),
-                ]
+                ] + base_cmd[1:]
+            
+            # Insert encoder args after -map [v]
+            insert_pos = cmd.index("-an")
+            for arg in reversed(encoder_args):
+                cmd.insert(insert_pos, arg)
 
             _run_ffmpeg(cmd, progress_total_sec=use_dur, progress_label=f"clip {idx + 1}/{len(plans)}")
             clip_paths.append(out_clip)
@@ -1109,8 +1185,11 @@ def _render_timeline_ffmpeg(
         concat_cmd = [
             "ffmpeg", "-y",
             "-f", "concat", "-safe", "0",
+            "-protocol_whitelist", "file,pipe",
             "-i", str(list_path),
             "-c", "copy",
+            "-max_muxing_queue_size", "1024",
+            "-fflags", "+genpts",
             str(concat_out),
         ]
         _run_ffmpeg(concat_cmd, progress_total_sec=total_dur, progress_label="concat")
@@ -1134,12 +1213,15 @@ def _render_timeline_ffmpeg(
                 "-i", str(concat_out),
                 "-stream_loop", "-1",
                 "-i", str(bgm_path),
-                "-t", str(total_dur),
                 "-c:v", "copy",
                 "-c:a", "aac",
-                "-shortest",
+                "-q:a", "8",
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-t", str(total_dur),
                 "-af", afilter,
-                "-movflags", "+faststart",
+                "-movflags", "+faststart+empty_moov",
+                "-fflags", "+genpts",
                 str(output_path),
             ]
             _run_ffmpeg(audio_cmd, progress_total_sec=total_dur, progress_label="bgm")
