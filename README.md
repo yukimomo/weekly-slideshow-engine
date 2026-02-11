@@ -70,7 +70,13 @@ pip install -r requirements.txt
   - 0%: BGM無効（ビデオ音声のみ）
 - `--resolution <WIDTHxHEIGHT>`: 出力解像度（例: 1920x1080、1080x1920）。目安: 320x240～8192x4320。未指定時は既定を使用。
 - `--preset <name>`: プリセット（youtube / mobile / preview）。プリセット適用後に明示フラグが上書き。
+- `--config <path>`: YAMLの設定ファイル。プリセット適用後に読み込み、CLIが上書きします。
+- `--print-config`: 最終的な設定（effective config）を出力します。
 - `--dry-run`: 実行せず有効値とスキャン結果を表示（サンプル一覧／集計／解像度／duration／transition／bg_blur など）。
+- `--fps <int>`: 出力FPS（既定: 30）。
+- `--photo-seconds <float>`: 写真1枚あたりの基準秒数（既定: 2.5）。
+- `--video-max-seconds <float>`: 動画1本あたりの最大秒数（既定: 5.0）。
+- `--photo-max-seconds <float>`: 余剰時間配分時の写真最大秒数（既定: 6.0）。
 
 ### プリセットの主要項目
 
@@ -79,6 +85,38 @@ pip install -r requirements.txt
 | youtube | 60s | 1920x1080 | 0.3s | 6.0 | 10% | 30 |
 | mobile | 60s | 1080x1920 | 0.25s | 8.0 | 10% | 30 |
 | preview | 8s | 1280x720 | 0.2s | 4.0 | 10% | 30 |
+
+### 設定ファイル（YAML）
+
+優先順位:
+
+1. preset既定
+2. configファイル
+3. CLI引数
+
+相対パスはconfigファイルの場所基準で解決されます。
+
+例:
+
+```yaml
+preset: youtube
+name: 2026-W04
+input: ./input
+output: ./output
+bgm: ./bgm
+resolution: 1920x1080
+fps: 30
+duration: 60
+photo_seconds: 2.5
+video_max_seconds: 5.0
+photo_max_seconds: 6.0
+transition: 0.3
+fade_max_ratio: 1.0
+bg_blur: 6.0
+bgm_volume: 10.0
+scan_all: false
+preserve_videos: false
+```
 
 ### ハードウェアエンコーディング（自動最適化）
 
@@ -134,6 +172,12 @@ python -m video_engine --week 2026-W04 --input ./input --bgm ./bgm \
 
 ```bash
 python -m video_engine --week 2026-W04 --input ./input --dry-run --verbose-scan --scan-limit 20
+```
+
+設定ファイルの例:
+
+```bash
+python -m video_engine --config settings.sample.yml --print-config
 ```
 
 プリセット＋ドライラン例（実効値の確認）:

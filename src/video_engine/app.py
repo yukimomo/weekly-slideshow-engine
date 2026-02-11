@@ -43,9 +43,12 @@ def run_e2e(
     bgm: Path | None,
     output_dir: Path,
     duration: float = float(DEFAULTS["duration"]),
-    fps: int = 30,
+    fps: int = int(DEFAULTS["fps"]),
     transition: float = float(DEFAULTS["transition"]),
-    fade_max_ratio: float = 1.0,
+    fade_max_ratio: float = float(DEFAULTS["fade_max_ratio"]),
+    photo_seconds: float = float(DEFAULTS["photo_seconds"]),
+    video_max_seconds: float = float(DEFAULTS["video_max_seconds"]),
+    photo_max_seconds: float = float(DEFAULTS["photo_max_seconds"]),
     preserve_videos: bool = False,
     bg_blur: float = float(DEFAULTS["bg_blur"]),
     bgm_volume: float = float(DEFAULTS["bgm_volume"]),
@@ -71,7 +74,13 @@ def run_e2e(
     for line in build_scan_summary_lines(report):
         print(line)
 
-    plans = build_timeline(items, target_seconds=duration)
+    plans = build_timeline(
+        items,
+        target_seconds=duration,
+        photo_seconds=photo_seconds,
+        video_max_seconds=video_max_seconds,
+        photo_max_seconds=photo_max_seconds,
+    )
 
     # Ensure output dir exists
     output_dir.mkdir(parents=True, exist_ok=True)

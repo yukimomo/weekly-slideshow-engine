@@ -1,0 +1,17 @@
+preset: youtube
+name: 2026-W04
+input: ./input
+output: ./output
+bgm: ./bgm
+resolution: 1920x1080
+fps: 30
+duration: 60
+photo_seconds: 2.5
+video_max_seconds: 5.0
+photo_max_seconds: 6.0
+transition: 0.3
+fade_max_ratio: 1.0
+bg_blur: 6.0
+bgm_volume: 10.0
+scan_all: false
+preserve_videos: false
