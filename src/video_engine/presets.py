@@ -14,6 +14,8 @@ DEFAULTS: Dict[str, object] = {
     "photo_seconds": 2.5,
     "video_max_seconds": 5.0,
     "photo_max_seconds": 6.0,
+    "timeline_mode": "even",
+    "video_weight": 2.0,
     "transition": 0.3,
     "fade_max_ratio": 1.0,
     "bg_blur": 6.0,
@@ -109,6 +111,8 @@ def detect_provided_options(argv_tokens: Optional[list[str]]) -> Set[str]:
     mark_if_present("--photo-seconds", "photo_seconds")
     mark_if_present("--video-max-seconds", "video_max_seconds")
     mark_if_present("--photo-max-seconds", "photo_max_seconds")
+    mark_if_present("--timeline-mode", "timeline_mode")
+    mark_if_present("--video-weight", "video_weight")
     mark_if_present("--name", "name")
     mark_if_present("--week", "name")
     mark_if_present("--input", "input")

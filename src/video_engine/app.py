@@ -49,6 +49,8 @@ def run_e2e(
     photo_seconds: float = float(DEFAULTS["photo_seconds"]),
     video_max_seconds: float = float(DEFAULTS["video_max_seconds"]),
     photo_max_seconds: float = float(DEFAULTS["photo_max_seconds"]),
+    timeline_mode: str = str(DEFAULTS["timeline_mode"]),
+    video_weight: float = float(DEFAULTS["video_weight"]),
     preserve_videos: bool = False,
     bg_blur: float = float(DEFAULTS["bg_blur"]),
     bgm_volume: float = float(DEFAULTS["bgm_volume"]),
@@ -80,6 +82,8 @@ def run_e2e(
         photo_seconds=photo_seconds,
         video_max_seconds=video_max_seconds,
         photo_max_seconds=photo_max_seconds,
+        timeline_mode=timeline_mode,
+        video_weight=video_weight,
     )
 
     # Ensure output dir exists

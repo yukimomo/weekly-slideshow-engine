@@ -25,6 +25,8 @@ CONFIG_KEYS = {
     "photo_seconds",
     "video_max_seconds",
     "photo_max_seconds",
+    "timeline_mode",
+    "video_weight",
     "bgm_volume",
     "scan_all",
     "preserve_videos",
@@ -44,6 +46,8 @@ CONFIG_PRINT_ORDER = [
     "photo_seconds",
     "video_max_seconds",
     "photo_max_seconds",
+    "timeline_mode",
+    "video_weight",
     "transition",
     "fade_max_ratio",
     "bg_blur",
@@ -70,6 +74,8 @@ def build_config_defaults() -> Dict[str, Any]:
         "fade_max_ratio": DEFAULTS["fade_max_ratio"],
         "bg_blur": DEFAULTS["bg_blur"],
         "bgm_volume": DEFAULTS["bgm_volume"],
+        "timeline_mode": DEFAULTS["timeline_mode"],
+        "video_weight": DEFAULTS["video_weight"],
         "scan_all": False,
         "preserve_videos": False,
     }
@@ -115,6 +121,25 @@ def normalize_config(raw: Dict[str, Any], config_path: Path) -> Dict[str, Any]:
             if not isinstance(value, bool):
                 raise ValueError(f"Config key {key} must be a boolean")
             normalized[norm_key] = value
+            continue
+
+        if norm_key == "timeline_mode":
+            if value is None:
+                normalized[norm_key] = None
+                continue
+            if not isinstance(value, str):
+                raise ValueError(f"Config key {key} must be a string")
+            mode = value.strip().lower()
+            if mode not in {"even", "weighted", "preserve-videos"}:
+                raise ValueError("timeline_mode must be one of: even, weighted, preserve-videos")
+            normalized[norm_key] = mode
+            continue
+
+        if norm_key == "video_weight":
+            val = _parse_float_value(key, value)
+            if val <= 0:
+                raise ValueError("video_weight must be > 0")
+            normalized[norm_key] = val
             continue
 
         if norm_key == "fps":

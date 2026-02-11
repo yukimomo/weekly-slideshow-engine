@@ -89,6 +89,9 @@ video-engine --help
 - `--photo-seconds <float>`: 写真1枚あたりの基準秒数（既定: 2.5）。
 - `--video-max-seconds <float>`: 動画1本あたりの最大秒数（既定: 5.0）。
 - `--photo-max-seconds <float>`: 余剰時間配分時の写真最大秒数（既定: 6.0）。
+- `--timeline-mode <even|weighted|preserve-videos>`: タイムライン配分モード。
+- `--video-weight <float>`: weighted時の動画優先度（写真に対する倍率、既定: 2.0）。
+- `--preserve-videos`: 互換用。`--timeline-mode preserve-videos` と同等（将来的に廃止予定）。
 
 ### プリセットの主要項目
 
@@ -122,6 +125,8 @@ duration: 60
 photo_seconds: 2.5
 video_max_seconds: 5.0
 photo_max_seconds: 6.0
+timeline_mode: even
+video_weight: 2.0
 transition: 0.3
 fade_max_ratio: 1.0
 bg_blur: 6.0

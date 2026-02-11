@@ -127,6 +127,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--timeline-mode",
+        type=str,
+        choices=["even", "weighted", "preserve-videos"],
+        default=str(DEFAULTS["timeline_mode"]),
+        help="Timeline allocation mode (even, weighted, preserve-videos).",
+    )
+
+    parser.add_argument(
+        "--video-weight",
+        type=float,
+        default=float(DEFAULTS["video_weight"]),
+        help=f"Weight multiplier for videos in weighted mode (default: {DEFAULTS['video_weight']})",
+    )
+
+    parser.add_argument(
         "--transition",
         type=float,
         default=float(DEFAULTS["transition"]),
@@ -242,6 +257,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "photo_seconds": float(args.photo_seconds),
         "video_max_seconds": float(args.video_max_seconds),
         "photo_max_seconds": float(args.photo_max_seconds),
+        "timeline_mode": str(args.timeline_mode),
+        "video_weight": float(args.video_weight),
         "transition": float(args.transition),
         "fade_max_ratio": float(args.fade_max_ratio),
         "bg_blur": float(args.bg_blur),
@@ -263,12 +280,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     args.photo_seconds = float(effective.get("photo_seconds", args.photo_seconds))
     args.video_max_seconds = float(effective.get("video_max_seconds", args.video_max_seconds))
     args.photo_max_seconds = float(effective.get("photo_max_seconds", args.photo_max_seconds))
+    args.timeline_mode = str(effective.get("timeline_mode", args.timeline_mode))
+    args.video_weight = float(effective.get("video_weight", args.video_weight))
     args.transition = float(effective.get("transition", args.transition))
     args.fade_max_ratio = float(effective.get("fade_max_ratio", args.fade_max_ratio))
     args.bg_blur = float(effective.get("bg_blur", args.bg_blur))
     args.bgm_volume = float(effective.get("bgm_volume", args.bgm_volume))
     args.scan_all = bool(effective.get("scan_all", args.scan_all))
     args.preserve_videos = bool(effective.get("preserve_videos", args.preserve_videos))
+
+    if args.preserve_videos:
+        if args.timeline_mode != "preserve-videos":
+            print("warning: --preserve-videos is deprecated; use --timeline-mode preserve-videos", file=sys.stderr)
+        args.timeline_mode = "preserve-videos"
+        args.preserve_videos = True
+        effective["timeline_mode"] = "preserve-videos"
+        effective["preserve_videos"] = True
+    elif args.timeline_mode == "preserve-videos":
+        args.preserve_videos = True
+        effective["preserve_videos"] = True
 
     # Week is optional; scanning behavior controlled by --scan-all
 
@@ -278,7 +308,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     scan_items = None
     scan_report = None
-    if args.dry_run or args.verbose_scan:
+    if args.dry_run or args.verbose_scan or args.print_config:
         scan_items, scan_report = scan_media_with_report(
             args.input,
             scan_all=bool(args.scan_all),
@@ -288,10 +318,32 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.print_config:
         printable = format_effective_config(effective)
         print(yaml.safe_dump(printable, sort_keys=False).strip())
+        if scan_items is not None:
+            from .timeline import build_timeline, summarize_timeline
+
+            plans = build_timeline(
+                scan_items,
+                target_seconds=float(args.duration),
+                photo_seconds=float(args.photo_seconds),
+                video_max_seconds=float(args.video_max_seconds),
+                photo_max_seconds=float(args.photo_max_seconds),
+                timeline_mode=str(args.timeline_mode),
+                video_weight=float(args.video_weight),
+            )
+            summary = summarize_timeline(plans, float(args.duration))
+            print(
+                "Timeline summary: "
+                f"target={summary['target_seconds']}s "
+                f"total={summary['total_planned']:.2f}s "
+                f"photos={int(summary['photo_count'])} "
+                f"videos={int(summary['video_count'])} "
+                f"per_photo={summary['per_photo']:.2f}s "
+                f"per_video={summary['per_video']:.2f}s"
+            )
 
     if args.dry_run:
         # Dry run: report what would happen
-        from .timeline import build_timeline
+        from .timeline import build_timeline, summarize_timeline
         items = scan_items or []
         report = scan_report
         if report is not None:
@@ -312,6 +364,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             photo_seconds=float(args.photo_seconds),
             video_max_seconds=float(args.video_max_seconds),
             photo_max_seconds=float(args.photo_max_seconds),
+            timeline_mode=str(args.timeline_mode),
+            video_weight=float(args.video_weight),
         )
         # Choose bgm summary
         bgm_choice = None
@@ -323,6 +377,16 @@ def main(argv: Optional[List[str]] = None) -> int:
                 bgm_choice = files[0] if files else None
 
         print(f"Timeline entries: {len(plans)}")
+        summary = summarize_timeline(plans, float(args.duration))
+        print(
+            "Timeline summary: "
+            f"target={summary['target_seconds']}s "
+            f"total={summary['total_planned']:.2f}s "
+            f"photos={int(summary['photo_count'])} "
+            f"videos={int(summary['video_count'])} "
+            f"per_photo={summary['per_photo']:.2f}s "
+            f"per_video={summary['per_video']:.2f}s"
+        )
         print(f"Chosen BGM: {bgm_choice}")
         # Preset summary + effective values
         print(f"Preset: {getattr(args, 'preset', None) or 'none'}")
@@ -368,6 +432,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             photo_seconds=float(args.photo_seconds),
             video_max_seconds=float(args.video_max_seconds),
             photo_max_seconds=float(args.photo_max_seconds),
+            timeline_mode=str(args.timeline_mode),
+            video_weight=float(args.video_weight),
             pre_scanned=scan_items,
             scan_report=scan_report,
         )
@@ -389,5 +455,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         photo_seconds=float(args.photo_seconds),
         video_max_seconds=float(args.video_max_seconds),
         photo_max_seconds=float(args.photo_max_seconds),
+        timeline_mode=str(args.timeline_mode),
+        video_weight=float(args.video_weight),
     )
     return rc

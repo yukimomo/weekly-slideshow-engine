@@ -62,3 +62,48 @@ def test_only_videos_under_target_last_extended():
     assert math.isclose(total_duration(plans), 60.0, rel_tol=0, abs_tol=1e-6)
     # Last clip should be larger than initial video_max_seconds
     assert plans[-1].duration > 5.0
+
+
+def test_weighted_mode_allocates_by_ratio():
+    items = [_mk_item(i, "photo") for i in range(10)] + [_mk_item(i + 10, "video") for i in range(2)]
+    plans = build_timeline(
+        items,
+        target_seconds=60.0,
+        timeline_mode="weighted",
+        video_weight=3.0,
+        photo_max_seconds=100.0,
+        video_max_seconds=100.0,
+    )
+    photo_plans = [p for p in plans if p.kind == "photo"]
+    video_plans = [p for p in plans if p.kind == "video"]
+    assert math.isclose(total_duration(plans), 60.0, rel_tol=0, abs_tol=1e-6)
+    assert math.isclose(video_plans[0].duration, photo_plans[0].duration * 3.0, rel_tol=0, abs_tol=1e-6)
+
+
+def test_preserve_videos_mode_uses_video_durations():
+    items = [_mk_item(i, "video") for i in range(2)] + [_mk_item(i + 2, "photo") for i in range(2)]
+    durations = {items[0].path: 20.0, items[1].path: 20.0}
+    plans = build_timeline(
+        items,
+        target_seconds=60.0,
+        timeline_mode="preserve-videos",
+        video_durations=durations,
+    )
+    assert math.isclose(total_duration(plans), 60.0, rel_tol=0, abs_tol=1e-6)
+    photo_plans = [p for p in plans if p.kind == "photo"]
+    assert all(math.isclose(p.duration, 10.0, rel_tol=0, abs_tol=1e-6) for p in photo_plans)
+
+
+def test_preserve_videos_trims_when_over_target():
+    items = [_mk_item(i, "video") for i in range(2)]
+    durations = {items[0].path: 40.0, items[1].path: 40.0}
+    plans = build_timeline(
+        items,
+        target_seconds=60.0,
+        timeline_mode="preserve-videos",
+        video_durations=durations,
+    )
+    assert len(plans) == 2
+    assert math.isclose(total_duration(plans), 60.0, rel_tol=0, abs_tol=1e-6)
+    assert math.isclose(plans[0].duration, 40.0, rel_tol=0, abs_tol=1e-6)
+    assert math.isclose(plans[1].duration, 20.0, rel_tol=0, abs_tol=1e-6)
