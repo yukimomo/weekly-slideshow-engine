@@ -14,6 +14,8 @@ from typing import List, Optional
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from .presets import DEFAULTS
+
     def parse_resolution(s):
         if s is None:
             return None
@@ -85,15 +87,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--duration",
         type=float,
-        default=8.0,
-        help="Duration in seconds for the preview video (default: 8.0)",
+        default=float(DEFAULTS["duration"]),
+        help=f"Duration in seconds for the preview video (default: {DEFAULTS['duration']})",
     )
 
     parser.add_argument(
         "--transition",
         type=float,
-        default=0.3,
-        help="Per-clip transition length in seconds (fade-in/out, default: 0.3). Set 0 to disable.",
+        default=float(DEFAULTS["transition"]),
+        help=f"Per-clip transition length in seconds (fade-in/out, default: {DEFAULTS['transition']}). Set 0 to disable.",
     )
 
     parser.add_argument(
@@ -139,15 +141,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--bg-blur",
         type=float,
-        default=6.0,
-        help="Blur radius for background of portrait photos (default: 6.0, set 0 to disable)",
+        default=float(DEFAULTS["bg_blur"]),
+        help=f"Blur radius for background of portrait photos (default: {DEFAULTS['bg_blur']}, set 0 to disable)",
     )
 
     parser.add_argument(
         "--bgm-volume",
         type=float,
-        default=10.0,
-        help="BGM volume level as percentage of original video audio (default: 10.0, range: 0-200)",
+        default=float(DEFAULTS["bgm_volume"]),
+        help=f"BGM volume level as percentage of original video audio (default: {DEFAULTS['bgm_volume']}, range: 0-200)",
     )
 
     return parser
@@ -164,19 +166,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     # Apply preset defaults, then let explicit CLI flags override.
-    from .presets import merge_preset, detect_provided_options
+    from .presets import build_base_config, merge_preset, detect_provided_options
     argv_tokens = argv if argv is not None else sys.argv[1:]
     # Backward-compat: when no arguments at all, require --name to guide usage
     if not argv_tokens:
         parser.error("argument --name is required")
     provided = detect_provided_options(argv_tokens)
-    base = {
-        "resolution": args.resolution,
-        "duration": float(args.duration),
-        "transition": float(args.transition),
-        "bg_blur": float(args.bg_blur),
-        "bgm_volume": float(args.bgm_volume),
-    }
+    base = build_base_config()
+    base.update(
+        {
+            "resolution": args.resolution,
+            "duration": float(args.duration),
+            "transition": float(args.transition),
+            "bg_blur": float(args.bg_blur),
+            "bgm_volume": float(args.bgm_volume),
+        }
+    )
     effective = merge_preset(getattr(args, "preset", None), base, provided)
     # Reflect effective values back to args
     args.resolution = effective.get("resolution", args.resolution)
@@ -232,7 +237,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         # Preset summary + effective values
         print(f"Preset: {getattr(args, 'preset', None) or 'none'}")
         eff_res = args.resolution
-        res_txt = f"{eff_res[0]}x{eff_res[1]}" if eff_res else "default"
+        if eff_res is not None:
+            res_txt = f"{eff_res[0]}x{eff_res[1]}"
+        elif args.preserve_videos:
+            res_txt = "auto (max video size, fallback 1280x720)"
+        else:
+            res_txt = "1280x720"
         print(f"Effective resolution: {res_txt}")
         print(f"Effective duration: {float(args.duration)}s")
         print(f"Effective transition: {float(args.transition)}s")

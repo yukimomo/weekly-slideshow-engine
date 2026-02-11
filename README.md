@@ -72,6 +72,14 @@ pip install -r requirements.txt
 - `--preset <name>`: プリセット（youtube / mobile / preview）。プリセット適用後に明示フラグが上書き。
 - `--dry-run`: 実行せず有効値とスキャン結果を表示（サンプル一覧／集計／解像度／duration／transition／bg_blur など）。
 
+### プリセットの主要項目
+
+| Preset | Duration | Resolution | Transition | bg_blur | bgm_volume | FPS |
+| --- | --- | --- | --- | --- | --- | --- |
+| youtube | 60s | 1920x1080 | 0.3s | 6.0 | 10% | 30 |
+| mobile | 60s | 1080x1920 | 0.25s | 8.0 | 10% | 30 |
+| preview | 8s | 1280x720 | 0.2s | 4.0 | 10% | 30 |
+
 ### ハードウェアエンコーディング（自動最適化）
 
 GPU搭載環境では、利用可能なハードウェアエンコーダが自動で検出・使用されます：
@@ -128,7 +136,7 @@ python -m video_engine --week 2026-W04 --input ./input --bgm ./bgm \
 python -m video_engine --week 2026-W04 --input ./input --dry-run --verbose-scan --scan-limit 20
 ```
 
-プリセット＋ドライラン例:
+プリセット＋ドライラン例（実効値の確認）:
 
 ```bash
 python -m video_engine --week 2026-W04 --input ./input --output ./output \

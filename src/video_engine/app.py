@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, List
 
+from .presets import DEFAULTS
 from .scan import (
     MediaItem,
     ScanReport,
@@ -41,13 +42,13 @@ def run_e2e(
     input_dir: Path,
     bgm: Path | None,
     output_dir: Path,
-    duration: float = 8.0,
+    duration: float = float(DEFAULTS["duration"]),
     fps: int = 30,
-    transition: float = 0.3,
+    transition: float = float(DEFAULTS["transition"]),
     fade_max_ratio: float = 1.0,
     preserve_videos: bool = False,
-    bg_blur: float = 6.0,
-    bgm_volume: float = 60.0,
+    bg_blur: float = float(DEFAULTS["bg_blur"]),
+    bgm_volume: float = float(DEFAULTS["bgm_volume"]),
     resolution: tuple[int, int] | None = None,
     scan_all_flag: bool = False,
     pre_scanned: List[MediaItem] | None = None,

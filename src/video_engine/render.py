@@ -20,6 +20,8 @@ import threading
 import queue
 from collections import deque
 
+from .presets import DEFAULTS
+
 # Pillow compatibility for Image.ANTIALIAS removal in recent versions.
 # Some MoviePy functions reference Image.ANTIALIAS; ensure it's defined.
 try:
@@ -489,8 +491,8 @@ def render_timeline(
     fade_out: float = 0.5,
     transition: float = 0.3,
     fade_max_ratio: float = 1.0,
-    bg_blur: float = 6.0,
-    bgm_volume: float = 60.0,
+    bg_blur: float = float(DEFAULTS["bg_blur"]),
+    bgm_volume: float = float(DEFAULTS["bgm_volume"]),
     preserve_videos: bool = False,
     resolution: tuple[int, int] | None = None,
 ) -> None:
@@ -498,11 +500,11 @@ def render_timeline(
 
     Plans should be an iterable of objects with (path, kind, duration) attributes.
 
-    Parameters:
-    - bg_blur: blur radius applied to the BACKGROUND layer for PHOTO clips only.
-      Set to 0 to disable blur. Default preserves previous behavior (6).
-    - bgm_volume: BGM volume as percentage (0-200), where 100 is equal to video audio.
-      Default is 60 (60% of video audio level).
+        Parameters:
+        - bg_blur: blur radius applied to the BACKGROUND layer for PHOTO clips only.
+            Set to 0 to disable blur. Default is 6.
+        - bgm_volume: BGM volume as percentage (0-200), where 100 is equal to video audio.
+            Default is 10 (10% of video audio level).
 
     preserve_videos: when True, use the original video file's duration for video clips
     instead of restricting them to the planned duration. Defaults to False.
@@ -1240,8 +1242,8 @@ def _render_timeline_ffmpeg(
     fade_out: float = 0.5,
     transition: float = 0.3,
     fade_max_ratio: float = 1.0,
-    bg_blur: float = 6.0,
-    bgm_volume: float = 60.0,
+    bg_blur: float = float(DEFAULTS["bg_blur"]),
+    bgm_volume: float = float(DEFAULTS["bgm_volume"]),
     preserve_videos: bool = False,
     resolution: tuple[int, int] | None = None,
 ) -> None:

@@ -7,6 +7,14 @@ from typing import Dict, Optional, Tuple, Set
 # - youtube: 60s
 # - mobile: 60s (keep consistent 1-min output)
 # - preview: 8s
+DEFAULTS: Dict[str, object] = {
+    "resolution": None,
+    "duration": 8.0,
+    "transition": 0.3,
+    "bg_blur": 6.0,
+    "bgm_volume": 10.0,
+}
+
 PRESETS: Dict[str, Dict[str, object]] = {
     "youtube": {
         "resolution": (1920, 1080),
@@ -34,6 +42,10 @@ PRESETS: Dict[str, Dict[str, object]] = {
 OPTION_KEYS = {"resolution", "duration", "transition", "bg_blur", "bgm_volume"}
 
 
+def build_base_config() -> Dict[str, object]:
+    return dict(DEFAULTS)
+
+
 def merge_preset(
     preset_name: Optional[str],
     base: Dict[str, object],
@@ -44,7 +56,7 @@ def merge_preset(
     Rules:
     - If preset_name is None or not recognized, return base unchanged.
     - Apply preset values only for keys not in `provided`.
-    - Keys considered: resolution, duration, transition, bg_blur.
+    - Keys considered: resolution, duration, transition, bg_blur, bgm_volume.
     """
     if not preset_name:
         return base
@@ -83,4 +95,5 @@ def detect_provided_options(argv_tokens: Optional[list[str]]) -> Set[str]:
     mark_if_present("--duration", "duration")
     mark_if_present("--transition", "transition")
     mark_if_present("--bg-blur", "bg_blur")
+    mark_if_present("--bgm-volume", "bgm_volume")
     return provided
