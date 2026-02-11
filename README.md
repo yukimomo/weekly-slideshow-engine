@@ -52,6 +52,8 @@ pip install -r requirements.txt
 
 - `--name <text>`: 出力ファイル名に使う名前（例: 2026-W04）。`--week`は互換エイリアス。
 - `--scan-all`: `--input`配下のサブフォルダも含めて再帰的に走査します。未指定時はフォルダ直下のみを走査します。
+- `--verbose-scan` / `--debug-scan`: スキャンの詳細ログを出力します（除外理由の集計、先頭N件のサンプルなど）。
+- `--scan-limit <n>`: 詳細ログで表示するサンプル件数（既定: 20、0で非表示）。
 - `--input <path>`: 入力ディレクトリ（既定: ./input）。
 - `--bgm <path>`: BGMファイルまたはディレクトリ（既定: ./bgm）。
 - `--output <path>`: 出力ディレクトリ（既定: ./output）。
@@ -68,7 +70,7 @@ pip install -r requirements.txt
   - 0%: BGM無効（ビデオ音声のみ）
 - `--resolution <WIDTHxHEIGHT>`: 出力解像度（例: 1920x1080、1080x1920）。目安: 320x240～8192x4320。未指定時は既定を使用。
 - `--preset <name>`: プリセット（youtube / mobile / preview）。プリセット適用後に明示フラグが上書き。
-- `--dry-run`: 実行せず有効値とスキャン結果を表示（解像度／duration／transition／bg_blur など）。
+- `--dry-run`: 実行せず有効値とスキャン結果を表示（サンプル一覧／集計／解像度／duration／transition／bg_blur など）。
 
 ### ハードウェアエンコーディング（自動最適化）
 
@@ -118,6 +120,12 @@ BGM音量は FFmpeg の `amix` フィルタで複数の音声トラックをミ�
 ```bash
 python -m video_engine --week 2026-W04 --input ./input --bgm ./bgm \
   --output ./output --duration 60 --transition 0.3 --bg-blur 8 --bgm-volume 10 --resolution 1080x1920
+```
+
+スキャン診断の例:
+
+```bash
+python -m video_engine --week 2026-W04 --input ./input --dry-run --verbose-scan --scan-limit 20
 ```
 
 プリセット＋ドライラン例:

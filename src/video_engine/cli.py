@@ -30,6 +30,15 @@ def build_parser() -> argparse.ArgumentParser:
         description="Weekly slideshow engine (skeleton CLI).",
     )
 
+    def parse_scan_limit(value: str) -> int:
+        try:
+            v = int(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError("--scan-limit must be an integer") from exc
+        if v < 0:
+            raise argparse.ArgumentTypeError("--scan-limit must be >= 0")
+        return v
+
     parser.add_argument(
         "--resolution",
         type=parse_resolution,
@@ -107,6 +116,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--verbose-scan",
+        "--debug-scan",
+        dest="verbose_scan",
+        action="store_true",
+        help="Show detailed scan logs, including sample media items and exclusion counts.",
+    )
+
+    parser.add_argument(
+        "--scan-limit",
+        type=parse_scan_limit,
+        default=20,
+        help="Maximum number of media items to display in verbose scan output (default: 20).",
+    )
+
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Perform a dry run without making changes.",
@@ -165,12 +189,34 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Prepare app entry
     from .app import run_e2e
+    from .scan import build_no_media_message, build_scan_summary_lines, scan_media_with_report
+
+    scan_items = None
+    scan_report = None
+    if args.dry_run or args.verbose_scan:
+        scan_items, scan_report = scan_media_with_report(
+            args.input,
+            scan_all=bool(args.scan_all),
+            sample_limit=int(args.scan_limit),
+        )
 
     if args.dry_run:
         # Dry run: report what would happen
-        from .scan import scan_flat, scan_all
         from .timeline import build_timeline
-        items = scan_all(args.input) if args.scan_all else scan_flat(args.input)
+        items = scan_items or []
+        report = scan_report
+        if report is not None:
+            if report.media_count == 0:
+                for line in build_no_media_message(report):
+                    print(line)
+            else:
+                for line in build_scan_summary_lines(report):
+                    print(line)
+                if args.scan_limit != 0:
+                    print(f"Sample media (first {min(len(report.sample_items), args.scan_limit)}):")
+                    for it in report.sample_items:
+                        print(f"  - {it.kind} {it.timestamp.isoformat()} {it.path}")
+
         plans = build_timeline(items, target_seconds=float(args.duration))
         # Choose bgm summary
         bgm_choice = None
@@ -181,9 +227,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                 files = sorted([p for p in args.bgm.iterdir() if p.is_file()])
                 bgm_choice = files[0] if files else None
 
-        print("Scan mode:", "recursive" if args.scan_all else "flat")
-        print(f"Input dir: {args.input} - found {len(items)} media items")
-        print(f"Input dir: {args.input} - found {len(items)} media items")
         print(f"Timeline entries: {len(plans)}")
         print(f"Chosen BGM: {bgm_choice}")
         # Preset summary + effective values
@@ -197,7 +240,32 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Effective bgm_volume: {float(args.bgm_volume)}%")
         return 0
 
+    if args.verbose_scan and scan_report is not None:
+        if scan_report.media_count > 0 and args.scan_limit != 0:
+            print(f"Sample media (first {min(len(scan_report.sample_items), args.scan_limit)}):")
+            for it in scan_report.sample_items:
+                print(f"  - {it.kind} {it.timestamp.isoformat()} {it.path}")
+
     # Non-dry run: run end-to-end
+    if scan_items is not None and scan_report is not None:
+        return run_e2e(
+            args.name,
+            args.input,
+            args.bgm,
+            args.output,
+            duration=float(args.duration),
+            fps=30,
+            transition=float(args.transition),
+            fade_max_ratio=float(args.fade_max_ratio),
+            preserve_videos=bool(args.preserve_videos),
+            bg_blur=float(args.bg_blur),
+            bgm_volume=float(args.bgm_volume),
+            resolution=args.resolution,
+            scan_all_flag=bool(args.scan_all),
+            pre_scanned=scan_items,
+            scan_report=scan_report,
+        )
+
     rc = run_e2e(
         args.name,
         args.input,

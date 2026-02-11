@@ -9,7 +9,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, List
 
-from .scan import scan_flat, scan_all, MediaItem, PHOTO_EXTS, VIDEO_EXTS
+from .scan import (
+    MediaItem,
+    ScanReport,
+    build_no_media_message,
+    build_scan_summary_lines,
+    scan_media_with_report,
+)
 from .timeline import build_timeline
 from .render import render_single_photo
 
@@ -44,16 +50,25 @@ def run_e2e(
     bgm_volume: float = 60.0,
     resolution: tuple[int, int] | None = None,
     scan_all_flag: bool = False,
+    pre_scanned: List[MediaItem] | None = None,
+    scan_report: ScanReport | None = None,
 ) -> int:
     """Run a minimal end-to-end preview creation for the given ISO week.
 
     Returns an exit code (0 success, 2 no media found).
     """
     # Simplified: scan current folder (non-recursive) by default; use recursive when requested.
-    items = scan_all(input_dir) if scan_all_flag else scan_flat(input_dir)
+    if pre_scanned is None or scan_report is None:
+        items, report = scan_media_with_report(input_dir, scan_all=scan_all_flag, sample_limit=20)
+    else:
+        items, report = pre_scanned, scan_report
     if not items:
-        print("no media found")
+        for line in build_no_media_message(report):
+            print(line)
         return 2
+
+    for line in build_scan_summary_lines(report):
+        print(line)
 
     plans = build_timeline(items, target_seconds=duration)
 
