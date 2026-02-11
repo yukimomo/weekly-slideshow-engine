@@ -140,6 +140,32 @@ def test_scan_media_with_report_counts(tmp_path: Path) -> None:
     assert report.excluded_counts.get(ExclusionReason.directory, 0) == 1
 
 
+def test_scan_media_with_report_recursive(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    nested = input_dir / "nested"
+    nested.mkdir(parents=True)
+
+    jpg = nested / "photo.jpg"
+    _write_minimal_jpeg(jpg)
+
+    items, report = scan_media_with_report(input_dir, scan_all=True, sample_limit=5)
+
+    assert report.scan_all is True
+    assert report.media_count == 1
+    assert items[0].path == jpg
+
+
+def test_scan_media_with_report_empty_dir(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+
+    items, report = scan_media_with_report(input_dir, scan_all=False, sample_limit=5)
+
+    assert items == []
+    assert report.input_exists is True
+    assert report.media_count == 0
+
+
 def test_normalize_input_path_strips_quotes(tmp_path: Path) -> None:
     input_dir = tmp_path / "input"
     input_dir.mkdir()

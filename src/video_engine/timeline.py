@@ -83,107 +83,81 @@ def build_timeline(
         raise ValueError(f"Unknown timeline_mode: {timeline_mode}")
 
     if timeline_mode == "preserve-videos":
-        plans: List[ClipPlan] = []
-        video_durs: List[float] = []
+        plans = []
         photo_indices: List[int] = []
-        for idx, it in enumerate(items):
+        for it in items:
             if it.kind == "video":
                 vdur = _get_video_duration(it.path)
                 if vdur is None or vdur <= 0:
                     vdur = float(video_max_seconds)
-                video_durs.append(float(vdur))
                 plans.append(ClipPlan(path=it.path, kind="video", duration=float(vdur)))
             else:
                 photo_indices.append(len(plans))
                 plans.append(ClipPlan(path=it.path, kind="photo", duration=0.0))
 
-        total_video = sum(video_durs)
+        total_video = sum(p.duration for p in plans if p.kind == "video")
         remaining = float(target_seconds) - total_video
 
         if remaining <= 0:
-            # No room for photos; trim videos from the end to fit.
-            trimmed: List[ClipPlan] = [p for p in plans if p.kind == "video"]
-            if total(trimmed) <= 0:
-                return []
-
-            while len(trimmed) > 1 and total(trimmed) > target_seconds:
-                trimmed.pop()
-
-            if len(trimmed) == 1 and total(trimmed) > target_seconds:
-                remainder = target_seconds
-                if remainder >= 0.1:
-                    trimmed[0].duration = remainder
-                    return trimmed
-                return []
-
-            while trimmed:
-                prev_sum = total(trimmed[:-1])
-                remainder = target_seconds - prev_sum
-                if remainder >= 0.1:
-                    trimmed[-1].duration = remainder
-                    break
-                trimmed.pop()
-            return trimmed
+            # Trim only the last video to fit; keep all video plans.
+            if plans:
+                over = total(plans) - float(target_seconds)
+                if over > 0:
+                    for p in reversed(plans):
+                        if p.kind == "video":
+                            p.duration = max(0.0, p.duration - over)
+                            break
+            return plans
 
         if photo_indices:
             per_photo = remaining / len(photo_indices)
-            if per_photo > photo_max_seconds:
-                per_photo = float(photo_max_seconds)
             for idx in photo_indices:
                 plans[idx].duration = per_photo
             leftover = float(target_seconds) - total(plans)
-            if leftover > 1e-12 and plans:
+            if abs(leftover) > 1e-6 and plans:
                 plans[-1].duration += leftover
         else:
             if plans:
                 plans[-1].duration += remaining
+        # Normalize total duration to target (final clip absorbs epsilon).
+        diff = float(target_seconds) - total(plans)
+        if plans and abs(diff) > 1e-6:
+            plans[-1].duration += diff
         return plans
 
     if timeline_mode == "weighted":
         if video_weight <= 0:
             raise ValueError("video_weight must be > 0")
         weights: List[float] = []
-        max_caps: List[float] = []
+        caps: List[float] = []
         for it in items:
             if it.kind == "video":
                 weights.append(float(video_weight))
-                max_caps.append(float(video_max_seconds))
+                caps.append(float(video_max_seconds))
             else:
                 weights.append(1.0)
-                max_caps.append(float(photo_max_seconds))
+                caps.append(float(photo_max_seconds))
 
-        remaining = float(target_seconds)
         durations = [0.0 for _ in items]
-        eligible = set(range(len(items)))
-        while eligible and remaining > 1e-12:
-            total_weight = sum(weights[i] for i in eligible)
-            if total_weight <= 0:
+        remaining = float(target_seconds)
+        remaining_weight = sum(weights)
+        for idx, w in enumerate(weights):
+            if remaining_weight <= 0:
                 break
-            per = remaining / total_weight
-            progressed = False
-            for idx in list(eligible):
-                proposed = per * weights[idx]
-                cap = max_caps[idx]
-                if cap > 0 and proposed > cap:
-                    durations[idx] = cap
-                    remaining -= cap
-                    eligible.remove(idx)
-                    progressed = True
-                else:
-                    durations[idx] = proposed
-                    progressed = True
-            if not progressed:
-                break
+            share = remaining * (w / remaining_weight)
+            cap = caps[idx]
+            durations[idx] = min(share, cap) if cap > 0 else share
 
-            if all((max_caps[i] <= 0 or durations[i] <= max_caps[i]) for i in eligible):
-                break
+        total_assigned = sum(durations)
+        if total_assigned > 0:
+            scale = float(target_seconds) / total_assigned
+            durations = [d * scale for d in durations]
 
-        if remaining > 1e-12 and durations:
-            durations[-1] += remaining
+        if durations:
+            diff = float(target_seconds) - sum(durations)
+            durations[-1] += diff
 
-        plans = []
-        for it, dur in zip(items, durations):
-            plans.append(ClipPlan(path=it.path, kind=it.kind, duration=float(dur)))
+        plans = [ClipPlan(path=it.path, kind=it.kind, duration=float(dur)) for it, dur in zip(items, durations)]
         return plans
 
     plans: List[ClipPlan] = []
@@ -268,6 +242,11 @@ def build_timeline(
         plans[-1].duration += remaining
         remaining = 0.0
 
+    diff = float(target_seconds) - total(plans)
+    if plans and abs(diff) > 1e-6:
+        plans[-1].duration += diff
+    if abs(float(target_seconds) - total(plans)) > 1e-6:
+        raise ValueError("timeline duration drifted from target")
     return plans
 
 

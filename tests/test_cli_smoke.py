@@ -55,3 +55,22 @@ def test_cli_entrypoint_accepts_help() -> None:
     with pytest.raises(SystemExit) as exc:
         cli.main(["--help"])
     assert exc.value.code == 0
+
+
+def test_cli_accepts_timeline_options(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+
+    rc = cli.main(
+        [
+            "--dry-run",
+            "--input",
+            str(input_dir),
+            "--timeline-mode",
+            "weighted",
+            "--video-weight",
+            "3",
+            "--print-config",
+        ]
+    )
+    assert rc == 0
