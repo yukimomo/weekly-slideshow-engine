@@ -122,8 +122,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--bgm-volume",
         type=float,
-        default=60.0,
-        help="BGM volume level as percentage of original video audio (default: 60.0, range: 0-200)",
+        default=10.0,
+        help="BGM volume level as percentage of original video audio (default: 10.0, range: 0-200)",
     )
 
     return parser

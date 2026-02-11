@@ -302,12 +302,12 @@ def _get_filter_scale() -> float:
     return 1.0
 
 
-def _stage_video_path(path: Path, tmpdir: str, idx: int) -> Path:
-    """Stage OneDrive videos to a local temp path to avoid placeholder stalls."""
+def _stage_media_path(path: Path, tmpdir: str, idx: int) -> Path:
+    """Stage OneDrive media to a local temp path to avoid placeholder stalls."""
     if "OneDrive" in str(path) or "OneDrive" in str(path.resolve()):
         staged = Path(tmpdir) / f"staged_{idx:04d}{path.suffix.lower()}"
         if not staged.exists():
-            print("[ffmpeg] Staging video to local cache...", flush=True)
+            print("[ffmpeg] Staging media to local cache...", flush=True)
             shutil.copy2(path, staged)
         return staged
     return path
@@ -371,6 +371,22 @@ def _build_silence_audio_cmd(use_dur: float, out_audio: Path) -> list[str]:
         "-c:a", "pcm_s16le",
         str(out_audio),
     ]
+
+
+def _ensure_raster_photo(path: Path, tmpdir: str, idx: int) -> Path:
+    """Convert HEIC/HEIF to PNG for ffmpeg if needed."""
+    ext = path.suffix.lower()
+    if ext not in (".heic", ".heif"):
+        return path
+    try:
+        from PIL import Image
+        out_path = Path(tmpdir) / f"photo_{idx:04d}.png"
+        if not out_path.exists():
+            with Image.open(path) as img:
+                img.save(out_path, format="PNG")
+        return out_path
+    except Exception:
+        return path
 
 
 def _build_audio_concat_cmd(audio_list_path: Path, audio_concat: Path) -> list[str]:
@@ -1275,10 +1291,8 @@ def _render_timeline_ffmpeg(
             if not path.exists() or not path.is_file():
                 raise FileNotFoundError(f"Clip not found: {path}")
 
-            # Stage OneDrive videos to local temp cache to avoid network/placeholder stalls
-            staged_path = path
-            if getattr(p, "kind", None) == "video":
-                staged_path = _stage_video_path(path, tmpdir, idx)
+            # Stage OneDrive media to local temp cache to avoid network/placeholder stalls
+            staged_path = _stage_media_path(path, tmpdir, idx)
 
             dur = float(p.duration)
             use_dur = dur
@@ -1290,7 +1304,7 @@ def _render_timeline_ffmpeg(
             else:
                 try:
                     from PIL import Image
-                    with Image.open(path) as img:
+                    with Image.open(staged_path) as img:
                         src_w, src_h = img.size
                 except Exception:
                     src_w, src_h = None, None
@@ -1347,10 +1361,14 @@ def _render_timeline_ffmpeg(
 
             # kind already resolved above
             if kind == "photo":
+                raster_path = _ensure_raster_photo(staged_path, tmpdir, idx)
+                if raster_path.suffix.lower() in (".heic", ".heif") and _ffmpeg_supports_heif():
+                    photo_input = ["-loop", "1", "-framerate", str(int(fps)), "-i", str(raster_path)]
+                else:
+                    photo_input = ["-loop", "1", "-framerate", str(int(fps)), "-i", str(raster_path)]
                 cmd = [
                     "ffmpeg", "-y",
-                    "-loop", "1",
-                    "-i", str(path),
+                    *photo_input,
                 ] + base_cmd[1:]
             else:
                 video_input_opts = _build_video_input_opts()
