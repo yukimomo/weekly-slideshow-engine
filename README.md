@@ -41,6 +41,12 @@ Designed for fully automated, rule-based video composition using MoviePy.
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
+pip install -e .
+```
+
+requirements.txt を使う場合は以下でもOKです（開発前提の簡易手順）:
+
+```bash
 pip install -r requirements.txt
 ```
 
@@ -49,6 +55,12 @@ pip install -r requirements.txt
 ## 使い方（CLI）
 
 `python -m video_engine` のCLIで入力フォルダ内の写真・動画をスキャンしてプレビュー動画を生成します。主なオプションは以下の通りです。
+
+PowerShell 実行例:
+
+```powershell
+video-engine --help
+```
 
 - `--name <text>`: 出力ファイル名に使う名前（例: 2026-W04）。`--week`は互換エイリアス。
 - `--scan-all`: `--input`配下のサブフォルダも含めて再帰的に走査します。未指定時はフォルダ直下のみを走査します。

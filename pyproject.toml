@@ -12,6 +12,9 @@ authors = [{name = "Your Name"}]
 keywords = ["video", "cli"]
 dependencies = ["PyYAML>=6.0"]
 
+[project.scripts]
+video-engine = "video_engine.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

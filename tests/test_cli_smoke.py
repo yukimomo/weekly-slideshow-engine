@@ -13,6 +13,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+from video_engine import cli
+
 
 def _run_module(args: list[str]) -> subprocess.CompletedProcess:
     """Run the current Python interpreter with `-m video_engine` plus args.
@@ -46,3 +49,9 @@ def test_no_args_requires_week() -> None:
     # CLI now requires --name on empty invocation; verify it fails with a useful message.
     assert proc.returncode != 0, f"Expected non-zero exit when --name missing. stdout={proc.stdout!r} stderr={proc.stderr!r}"
     assert "argument --name is required" in (proc.stderr or ""), f"stderr did not mention missing --name. stderr={proc.stderr!r}"
+
+
+def test_cli_entrypoint_accepts_help() -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--help"])
+    assert exc.value.code == 0
